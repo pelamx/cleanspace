@@ -1,9 +1,12 @@
-//! DeskMonk telemetry + admin panel on Cloudflare Workers and D1. Same routes as server/:
+//! deskMonk telemetry + admin panel on Cloudflare Workers and D1. Same routes as server/:
 //! POST /api/events        ← apps send JSON events here
 //! GET  /admin             overview (HTTP Basic auth: user "admin", password = ADMIN_TOKEN secret)
 //! GET  /admin/user/<id>   one installation's full history and hardware
+//! Pro licenses (Paddle): see license.ts.
 
-export interface Env {
+import { handleLicense, type LicenseEnv } from "./license";
+
+export interface Env extends LicenseEnv {
   DB: D1Database;
   ADMIN_TOKEN: string;
 }
@@ -32,13 +35,16 @@ export default {
       return new Response(null, { status: 204 });
     }
 
+    const license = await handleLicense(req, env, path);
+    if (license !== null) return license;
+
     if (req.method !== "GET" || !(path === "/admin" || path.startsWith("/admin/"))) {
       return new Response(null, { status: 404 });
     }
     const token = env.ADMIN_TOKEN ?? "";
     if (token.length < 12) return new Response("ADMIN_TOKEN must be set (at least 12 characters)", { status: 500 });
     if (!constantTimeEqual(req.headers.get("Authorization") ?? "", `Basic ${btoa(`admin:${token}`)}`)) {
-      return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="DeskMonk admin"' } });
+      return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="deskMonk admin"' } });
     }
     const id = path.startsWith("/admin/user/") ? decodeURIComponent(path.slice("/admin/user/".length)) : null;
     const html = id === null ? await overviewPage(env.DB) : await userPage(env.DB, id);

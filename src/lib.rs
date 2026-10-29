@@ -1,9 +1,13 @@
 pub mod applock;
 pub mod diskmap;
+pub mod focus;
 pub mod hardware;
+pub mod plan;
+pub mod i18n;
 pub mod scan;
 pub mod speedtest;
 pub mod telemetry;
+pub mod vault;
 
 use scan::Item;
 use std::fs;
@@ -12,6 +16,23 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
+
+/// (total, free) bytes of the disk holding `dir`. Free is what an app can write, so on macOS it leaves out
+/// purgeable space that Finder counts as available.
+#[cfg(unix)]
+pub fn disk_space(dir: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    (unsafe { libc::statvfs(path.as_ptr(), &mut stat) } == 0)
+        .then(|| (stat.f_blocks as u64 * stat.f_frsize as u64, stat.f_bavail as u64 * stat.f_frsize as u64))
+}
+
+// shortcut: Windows has no statvfs; GetDiskFreeSpaceExW (windows-sys) would fill this in when needed.
+#[cfg(not(unix))]
+pub fn disk_space(_: &Path) -> Option<(u64, u64)> {
+    None
+}
 
 /// A deletion running on a background thread, so the UI never freezes on big folders.
 pub struct Deletion {

@@ -1,4 +1,4 @@
-//! DeskMonk telemetry server + admin panel.
+//! deskMonk telemetry server + admin panel.
 //!
 //! Env: DESKMONK_ADMIN_TOKEN (required), DESKMONK_ADDR (default 0.0.0.0:8080), DESKMONK_DB (default deskmonk.db).
 //! POST /api/events        ← apps send JSON events here
@@ -38,7 +38,7 @@ fn main() {
     let db = open_db(&std::env::var("DESKMONK_DB").unwrap_or_else(|_| "deskmonk.db".into()))
         .expect("open database");
     let server = Server::http(&addr).expect("bind address");
-    println!("DeskMonk server listening on http://{addr}  (admin: /admin)");
+    println!("deskMonk server listening on http://{addr}  (admin: /admin)");
 
     // shortcut: single-threaded request loop; fine for thousands of events/minute, put it behind a queue or async runtime beyond that.
     for req in server.incoming_requests() {
@@ -100,7 +100,7 @@ fn handle(mut req: Request, db: &Connection, expected_auth: &str) -> std::io::Re
         .unwrap_or_default();
     if !constant_time_eq(auth.as_bytes(), expected_auth.as_bytes()) {
         let challenge =
-            Header::from_bytes("WWW-Authenticate", "Basic realm=\"DeskMonk admin\"").unwrap();
+            Header::from_bytes("WWW-Authenticate", "Basic realm=\"deskMonk admin\"").unwrap();
         return req.respond(Response::empty(401).with_header(challenge));
     }
     let page = match path.strip_prefix("/admin/user/") {

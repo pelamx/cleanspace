@@ -27,10 +27,15 @@ impl Drop for TempFile {
 /// Refuses to run when the disk does not have plenty of free space: users of a cleaner are often nearly full.
 /// Slow (seconds on an HDD): call it off the UI thread.
 pub fn run(dir: &Path, size: u64, progress: &AtomicU64) -> io::Result<Speed> {
-    if let Some(free) = free_space(dir)
+    // shortcut: no free-space check on Windows (see disk_space); a full disk fails the write and the file is still removed.
+    if let Some((_, free)) = crate::disk_space(dir)
         && free < size.saturating_mul(3)
     {
-        return Err(io::Error::other("Test için yeterli boş alan yok"));
+        return Err(io::Error::other(crate::i18n::t(
+            "Test için yeterli boş alan yok",
+            "Not enough free space for the test",
+            "No hay suficiente espacio libre para la prueba",
+        )));
     }
     let file = TempFile(dir.join(format!(".deskmonk-speedtest-{}", std::process::id())));
     // Random-looking data: some SSD controllers compress zeros and would report fake speeds.
@@ -97,21 +102,6 @@ fn drop_cache(file: &File) {
 // FILE_FLAG_NO_BUFFERING and sector-aligned buffers if Windows numbers matter.
 #[cfg(not(target_os = "linux"))]
 fn drop_cache(_: &File) {}
-
-#[cfg(unix)]
-fn free_space(dir: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    (unsafe { libc::statvfs(path.as_ptr(), &mut stat) } == 0)
-        .then(|| stat.f_bavail as u64 * stat.f_frsize as u64)
-}
-
-// shortcut: no free-space check on Windows; a full disk fails the write and the file is still removed.
-#[cfg(not(unix))]
-fn free_space(_: &Path) -> Option<u64> {
-    None
-}
 
 #[cfg(test)]
 mod tests {

@@ -81,11 +81,37 @@ pub fn can_lock(app: &Path) -> bool {
         && std::env::current_exe().map_or(true, |me| !me.starts_with(app))
 }
 
+/// Lockable .app bundles in the usual app folders (and one folder deeper, e.g. /Applications/Adobe X/), sorted by name.
+pub fn installed_apps() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities"]
+        .map(PathBuf::from)
+        .into();
+    dirs.extend(dirs::home_dir().map(|h| h.join("Applications")));
+    let mut apps = Vec::new();
+    for dir in dirs {
+        apps_in(&dir, 1, &mut apps);
+    }
+    apps.retain(|a| can_lock(a));
+    apps.sort_by_key(|a| a.file_stem().unwrap_or_default().to_string_lossy().to_lowercase());
+    apps.dedup();
+    apps
+}
+
+fn apps_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    for path in fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()) {
+        if path.extension().is_some_and(|e| e == "app") {
+            out.push(path);
+        } else if depth > 0 && path.is_dir() && path.file_name() != Some("Utilities".as_ref()) {
+            apps_in(&path, depth - 1, out);
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     apps: Vec<PathBuf>,
-    /// Unlocked apps, with when they were unlocked. They lock again once they quit.
-    allowed: HashMap<PathBuf, Instant>,
+    /// Unlocked apps: when they were unlocked, or None once seen running. They lock again once they quit.
+    allowed: HashMap<PathBuf, Option<Instant>>,
     /// Apps with a password prompt on screen; further launches are stopped without a new prompt.
     pending: HashSet<PathBuf>,
 }
@@ -100,14 +126,15 @@ impl State {
         for app in &self.apps {
             let pids: Vec<i32> = procs.iter().filter(|(_, p)| runs_from(p, app)).map(|(pid, _)| *pid).collect();
             if pids.is_empty() {
-                if self.allowed.get(app).is_some_and(|t| now - *t > START_GRACE) {
+                // Quit after running, or never started within the grace period: locked again.
+                if self.allowed.get(app).is_some_and(|t| t.is_none_or(|t| now - t > START_GRACE)) {
                     self.allowed.remove(app);
                 }
                 continue;
             }
-            if self.allowed.contains_key(app) {
-                // Still running: keep it unlocked for as long as it runs.
-                self.allowed.insert(app.clone(), now);
+            if let Some(t) = self.allowed.get_mut(app) {
+                // Running: unlocked for as long as it runs.
+                *t = None;
                 continue;
             }
             kill.extend(pids);
@@ -122,7 +149,7 @@ impl State {
     fn allow_running(&mut self, procs: &[(i32, PathBuf)], now: Instant) {
         for app in &self.apps {
             if procs.iter().any(|(_, p)| runs_from(p, app)) {
-                self.allowed.insert(app.clone(), now);
+                self.allowed.insert(app.clone(), Some(now));
             }
         }
     }
@@ -171,7 +198,7 @@ impl Watcher {
     /// Right password: opens the app and keeps it unlocked until it quits.
     pub fn unlock(&self, app: &Path) {
         let mut state = self.0.lock().unwrap();
-        state.allowed.insert(app.to_path_buf(), Instant::now());
+        state.allowed.insert(app.to_path_buf(), Some(Instant::now()));
         state.pending.remove(app);
         let _ = std::process::Command::new("open").arg(app).spawn();
     }
@@ -212,6 +239,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn finds_apps_one_folder_deep() {
+        let dir = std::env::temp_dir().join(format!("deskmonk-apps-{}", std::process::id()));
+        for app in ["A.app/Contents", "Suite/B.app", "Suite/Deep/C.app", "Utilities/D.app"] {
+            fs::create_dir_all(dir.join(app)).unwrap();
+        }
+        let mut found = Vec::new();
+        apps_in(&dir, 1, &mut found);
+        found.sort();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(found, vec![dir.join("A.app"), dir.join("Suite/B.app")]);
+    }
+
+    #[test]
     fn password_round_trip() {
         let mut config = Config::default();
         assert!(!config.check(""));
@@ -232,11 +272,17 @@ mod tests {
         assert_eq!(state.check(&translocated, t0), (vec![43], vec![]));
         // Unlocked: left alone while running, locked again after quitting.
         state.pending.clear();
-        state.allowed.insert(app.clone(), t0);
+        state.allowed.insert(app.clone(), Some(t0));
+        assert_eq!(state.check(&[], t0 + Duration::from_secs(5)), (vec![], vec![]));
         assert_eq!(state.check(&running, t0 + Duration::from_secs(60)), (vec![], vec![]));
+        // Quit, then reopened at once: asks again (no grace after quitting).
         assert_eq!(state.check(&[], t0 + Duration::from_secs(61)), (vec![], vec![]));
-        assert_eq!(state.check(&[], t0 + Duration::from_secs(80)), (vec![], vec![]));
-        assert_eq!(state.check(&running, t0 + Duration::from_secs(81)).0, vec![42]);
+        assert_eq!(state.check(&running, t0 + Duration::from_secs(62)).0, vec![42]);
+        // Unlocked but never started within the grace period: locked again.
+        let mut state = State { apps: vec![app.clone()], ..Default::default() };
+        state.allowed.insert(app.clone(), Some(t0));
+        assert_eq!(state.check(&[], t0 + Duration::from_secs(16)), (vec![], vec![]));
+        assert_eq!(state.check(&running, t0 + Duration::from_secs(17)).0, vec![42]);
 
         // Already running when locked: never killed.
         let mut state = State { apps: vec![app.clone()], ..Default::default() };

@@ -1,12 +1,14 @@
 //! Hardware inventory with component brands and live usage, read with the OS's own tools.
 //! Never collects serial numbers, host names or user names: these specs are sent to the admin panel.
 
+use crate::i18n::t;
 use crate::scan::human_size;
+use crate::tf;
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Component {
-    /// Label shown in the app and the admin panel, e.g. "İşlemci".
+    /// Fixed Turkish key, e.g. "İşlemci": the stats server queries it. Show it with [`kind_label`].
     pub kind: &'static str,
     /// Brand name, empty when unknown.
     pub brand: String,
@@ -90,6 +92,33 @@ fn part(kind: &'static str, hint: &str, name: impl Into<String>, detail: impl In
     Component { kind, brand, name: name.trim().to_string(), detail: detail.into() }
 }
 
+/// A component kind in the UI language.
+pub fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "Bilgisayar" => t("Bilgisayar", "Computer", "Equipo"),
+        "Sistem" => t("Sistem", "System", "Sistema"),
+        "İşlemci" => t("İşlemci", "Processor", "Procesador"),
+        "Bellek" => t("Bellek", "Memory", "Memoria"),
+        "Ekran kartı" => t("Ekran kartı", "Graphics", "Gráficos"),
+        "Ekran" => t("Ekran", "Display", "Pantalla"),
+        "Depolama" => t("Depolama", "Storage", "Almacenamiento"),
+        "Disk alanı" => t("Disk alanı", "Disk space", "Espacio en disco"),
+        "Pil" => t("Pil", "Battery", "Batería"),
+        _ => t("Diğer", "Other", "Otro"),
+    }
+}
+
+/// "600 GB used / 900 GB · 300 GB free".
+fn used_free(used: u64, size: u64, free: u64) -> String {
+    let (used, size, free) = (human_size(used), human_size(size), human_size(free));
+    tf!("{used} dolu / {size} · {free} boş", "{used} used / {size} · {free} free", "{used} usado / {size} · {free} libre")
+}
+
+fn in_use(used: u64, total: u64) -> String {
+    let (used, total) = (human_size(used), human_size(total));
+    tf!("{used} kullanımda / {total}", "{used} in use / {total}", "{used} en uso / {total}")
+}
+
 /// Slow (spawns system tools, up to a few seconds on Windows): call it off the UI thread.
 pub fn detect() -> Vec<Component> {
     #[cfg(target_os = "macos")]
@@ -166,7 +195,7 @@ fn parse_mac(v: &Value) -> Vec<Component> {
     if sw.is_object() {
         let uptime = s(&sw["uptime"]).trim_start_matches("up ").split(':').collect::<Vec<_>>();
         let uptime = match uptime[..] {
-            [d, h, m, _] => format!("çalışma süresi {d} gün {h} sa {m} dk"),
+            [d, h, m, _] => tf!("çalışma süresi {d} gün {h} sa {m} dk", "up {d} d {h} h {m} min", "encendido {d} d {h} h {m} min"),
             _ => String::new(),
         };
         parts.push(part("Sistem", "Apple", s(&sw["os_version"]), uptime));
@@ -176,10 +205,17 @@ fn parse_mac(v: &Value) -> Vec<Component> {
     if !cpu.is_empty() {
         let cores = match s(&hw["number_processors"]).strip_prefix("proc ") {
             Some(split) => match split.split(':').collect::<Vec<_>>()[..] {
-                [all, perf, eff, ..] => format!("{all} çekirdek ({perf} performans + {eff} verimlilik)"),
+                [all, perf, eff, ..] => tf!(
+                    "{all} çekirdek ({perf} performans + {eff} verimlilik)",
+                    "{all} cores ({perf} performance + {eff} efficiency)",
+                    "{all} núcleos ({perf} de rendimiento + {eff} de eficiencia)"
+                ),
                 _ => String::new(),
             },
-            None => format!("{} çekirdek · {}", num(&hw["number_processors"]), s(&hw["current_processor_speed"])),
+            None => {
+                let (n, speed) = (num(&hw["number_processors"]), s(&hw["current_processor_speed"]));
+                tf!("{n} çekirdek · {speed}", "{n} cores · {speed}", "{n} núcleos · {speed}")
+            }
         };
         parts.push(part("İşlemci", "", cpu, cores));
     }
@@ -194,7 +230,7 @@ fn parse_mac(v: &Value) -> Vec<Component> {
         let detail = match (s(&gpu["sppci_cores"]), gpu["spdisplays_vram"].as_str().or(gpu["spdisplays_vram_shared"].as_str())) {
             ("", Some(vram)) => format!("{vram} VRAM"),
             ("", None) => String::new(),
-            (cores, _) => format!("{cores} GPU çekirdeği"),
+            (cores, _) => tf!("{cores} GPU çekirdeği", "{cores} GPU cores", "{cores} núcleos de GPU"),
         };
         parts.push(part("Ekran kartı", vendor, s(&gpu["_name"]), detail));
         for screen in list(&gpu["spdisplays_ndrvs"]) {
@@ -232,14 +268,7 @@ fn parse_mac(v: &Value) -> Vec<Component> {
             "Depolama",
             "",
             name,
-            format!(
-                "{} dolu / {} · {} boş · {} {}",
-                human_size(size.saturating_sub(free)),
-                human_size(size),
-                human_size(free),
-                s(&drive["medium_type"]).to_uppercase(),
-                s(&drive["protocol"]),
-            ),
+            format!("{} · {} {}", used_free(size.saturating_sub(free), size, free), s(&drive["medium_type"]).to_uppercase(), s(&drive["protocol"])),
         ));
     }
     for power in list(&v["SPPowerDataType"]) {
@@ -250,14 +279,18 @@ fn parse_mac(v: &Value) -> Vec<Component> {
         parts.push(part(
             "Pil",
             "",
-            "Dahili pil",
-            format!(
-                "%{} şarj · sağlık {} ({}) · {} döngü",
-                num(&power["sppower_battery_charge_info"]["sppower_battery_state_of_charge"]),
-                s(&health["sppower_battery_health"]),
-                s(&health["sppower_battery_health_maximum_capacity"]).replace('\u{a0}', ""),
-                num(&health["sppower_battery_cycle_count"]),
-            ),
+            t("Dahili pil", "Internal battery", "Batería interna"),
+            {
+                let charge = num(&power["sppower_battery_charge_info"]["sppower_battery_state_of_charge"]);
+                let state = s(&health["sppower_battery_health"]);
+                let max = s(&health["sppower_battery_health_maximum_capacity"]).replace('\u{a0}', "");
+                let cycles = num(&health["sppower_battery_cycle_count"]);
+                tf!(
+                    "%{charge} şarj · sağlık {state} ({max}) · {cycles} döngü",
+                    "{charge}% charged · health {state} ({max}) · {cycles} cycles",
+                    "{charge}% de carga · salud {state} ({max}) · {cycles} ciclos"
+                )
+            },
         ));
     }
     parts
@@ -287,15 +320,17 @@ fn parse_windows(v: &Value) -> Vec<Component> {
         parts.push(part("Sistem", "Microsoft", s(&v["os"]["Caption"]), ""));
     }
     for cpu in list(&v["cpu"]) {
-        let detail = format!("{} çekirdek / {} iş parçacığı", num(&cpu["NumberOfCores"]), num(&cpu["NumberOfLogicalProcessors"]));
+        let (cores, threads) = (num(&cpu["NumberOfCores"]), num(&cpu["NumberOfLogicalProcessors"]));
+        let detail = tf!("{cores} çekirdek / {threads} iş parçacığı", "{cores} cores / {threads} threads", "{cores} núcleos / {threads} hilos");
         parts.push(part("İşlemci", s(&cpu["Manufacturer"]), s(&cpu["Name"]), detail));
     }
     let total = num(&cs["TotalPhysicalMemory"]);
     let free = num(&v["os"]["FreePhysicalMemory"]) * 1024;
-    let mut ram_detail = format!("{} kullanımda / {}", human_size(total.saturating_sub(free)), human_size(total));
+    let mut ram_detail = in_use(total.saturating_sub(free), total);
     let sticks = list(&v["ram"]);
     if let Some(stick) = sticks.first() {
-        ram_detail += &format!(" · {} modül, {} MHz {}", sticks.len(), num(&stick["Speed"]), s(&stick["PartNumber"]).trim());
+        let (n, speed, part_no) = (sticks.len(), num(&stick["Speed"]), s(&stick["PartNumber"]).trim());
+        ram_detail += &tf!(" · {n} modül, {speed} MHz {part_no}", " · {n} modules, {speed} MHz {part_no}", " · {n} módulos, {speed} MHz {part_no}");
     }
     let maker = sticks.first().map_or("", |m| s(&m["Manufacturer"]));
     parts.push(part("Bellek", maker, human_size(total), ram_detail));
@@ -311,11 +346,11 @@ fn parse_windows(v: &Value) -> Vec<Component> {
     }
     for vol in list(&v["vol"]) {
         let (size, free) = (num(&vol["Size"]), num(&vol["FreeSpace"]));
-        let detail = format!("{} dolu / {} · {} boş", human_size(size.saturating_sub(free)), human_size(size), human_size(free));
-        parts.push(part("Disk alanı", "", s(&vol["DeviceID"]), detail));
+        parts.push(part("Disk alanı", "", s(&vol["DeviceID"]), used_free(size.saturating_sub(free), size, free)));
     }
     for bat in list(&v["bat"]) {
-        parts.push(part("Pil", "", s(&bat["Name"]), format!("%{} şarj", num(&bat["EstimatedChargeRemaining"]))));
+        let charge = num(&bat["EstimatedChargeRemaining"]);
+        parts.push(part("Pil", "", s(&bat["Name"]), tf!("%{charge} şarj", "{charge}% charged", "{charge}% de carga")));
     }
     parts
 }
@@ -330,16 +365,17 @@ fn linux() -> Vec<Component> {
     let os = read("/etc/os-release");
     let os = os.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=")).unwrap_or("Linux").trim_matches('"');
     let up = read("/proc/uptime").split('.').next().and_then(|n| n.parse::<u64>().ok()).unwrap_or(0);
-    let uptime = format!("çalışma süresi {} gün {} sa {} dk", up / 86400, up / 3600 % 24, up / 60 % 60);
+    let (d, h, m) = (up / 86400, up / 3600 % 24, up / 60 % 60);
+    let uptime = tf!("çalışma süresi {d} gün {h} sa {m} dk", "up {d} d {h} h {m} min", "encendido {d} d {h} h {m} min");
     parts.push(part("Sistem", "", os, uptime));
     let cpuinfo = read("/proc/cpuinfo");
     let field = |key: &str| cpuinfo.lines().find(|l| l.starts_with(key)).and_then(|l| l.split(':').nth(1)).unwrap_or("").trim();
     let threads = cpuinfo.lines().filter(|l| l.starts_with("processor")).count();
-    parts.push(part("İşlemci", field("vendor_id"), field("model name"), format!("{threads} iş parçacığı")));
+    parts.push(part("İşlemci", field("vendor_id"), field("model name"), tf!("{threads} iş parçacığı", "{threads} threads", "{threads} hilos")));
     let meminfo = read("/proc/meminfo");
     let kb = |key: &str| meminfo.lines().find(|l| l.starts_with(key)).and_then(|l| l.split_whitespace().nth(1)).and_then(|n| n.parse::<u64>().ok()).unwrap_or(0) * 1024;
     let (total, avail) = (kb("MemTotal:"), kb("MemAvailable:"));
-    parts.push(part("Bellek", "", human_size(total), format!("{} kullanımda / {}", human_size(total.saturating_sub(avail)), human_size(total))));
+    parts.push(part("Bellek", "", human_size(total), in_use(total.saturating_sub(avail), total)));
     // `lspci -mm` lines: slot "class" "vendor" "device" ...
     for line in run("lspci", &["-mm"]).lines().filter(|l| l.contains("\"VGA") || l.contains("\"3D")) {
         let fields: Vec<&str> = line.split('"').collect();
@@ -362,7 +398,7 @@ fn linux() -> Vec<Component> {
     // `df -kP /`: second line is "filesystem blocks used available ..."; sizes in KB.
     let df = run("df", &["-kP", "/"]);
     if let Some([size, used, free]) = df.lines().nth(1).map(|l| l.split_whitespace().skip(1).take(3).filter_map(|n| n.parse::<u64>().ok()).map(|n| n * 1024).collect::<Vec<_>>()).and_then(|v| <[u64; 3]>::try_from(v).ok()) {
-        parts.push(part("Disk alanı", "", "/", format!("{} dolu / {} · {} boş", human_size(used), human_size(size), human_size(free))));
+        parts.push(part("Disk alanı", "", "/", used_free(used, size, free)));
     }
     for entry in fs::read_dir("/sys/class/power_supply").into_iter().flatten().flatten() {
         let base = entry.path().display().to_string();
@@ -370,7 +406,10 @@ fn linux() -> Vec<Component> {
             continue;
         }
         let health = match (read(&format!("{base}/energy_full")).parse::<f64>(), read(&format!("{base}/energy_full_design")).parse::<f64>()) {
-            (Ok(full), Ok(design)) if design > 0.0 => format!(" · sağlık %{:.0}", full / design * 100.0),
+            (Ok(full), Ok(design)) if design > 0.0 => {
+                let pct = full / design * 100.0;
+                tf!(" · sağlık %{pct:.0}", " · health {pct:.0}%", " · salud {pct:.0}%")
+            }
             _ => String::new(),
         };
         let cycles = read(&format!("{base}/cycle_count"));
@@ -378,7 +417,10 @@ fn linux() -> Vec<Component> {
             "Pil",
             &read(&format!("{base}/manufacturer")),
             read(&format!("{base}/model_name")),
-            format!("%{} şarj{health} · {cycles} döngü", read(&format!("{base}/capacity"))),
+            {
+                let charge = read(&format!("{base}/capacity"));
+                tf!("%{charge} şarj{health} · {cycles} döngü", "{charge}% charged{health} · {cycles} cycles", "{charge}% de carga{health} · {cycles} ciclos")
+            },
         ));
     }
     parts
@@ -410,10 +452,10 @@ mod tests {
         });
         let parts = parse_mac(&mac);
         let get = |kind| parts.iter().find(|p| p.kind == kind).unwrap();
-        assert_eq!(get("İşlemci").detail, "15 çekirdek (5 performans + 10 verimlilik)");
+        assert_eq!(get("İşlemci").detail, "15 cores (5 performance + 10 efficiency)");
         assert_eq!(get("Bellek").brand, "Samsung");
         assert_eq!(parts.iter().filter(|p| p.kind == "Depolama").count(), 1);
-        assert!(get("Depolama").detail.starts_with("600 B dolu / 900 B"));
+        assert!(get("Depolama").detail.starts_with("600 B used / 900 B"));
         assert!(!format!("{parts:?}").contains("SECRET"));
 
         // PowerShell 5 list wrapping and lone objects.

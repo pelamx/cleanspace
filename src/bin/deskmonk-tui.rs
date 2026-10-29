@@ -1,6 +1,9 @@
 //! Terminal UI for servers / cloud machines: `deskmonk-tui [FOLDER]` (default: home).
 
+use deskmonk::i18n::{self, Lang, t};
+use deskmonk::plan::Plan;
 use deskmonk::scan::{Category, Item, Phase, human_size};
+use deskmonk::tf;
 use deskmonk::telemetry::{self, Telemetry};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -35,16 +38,19 @@ struct App {
     deleting: Option<deskmonk::Deletion>,
     status: String,
     telemetry: Telemetry,
+    plan: Plan,
 }
 
 fn main() -> io::Result<()> {
+    i18n::init();
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)
         .or_else(dirs::home_dir)
         .unwrap_or_default();
     if !root.is_dir() {
-        eprintln!("Klasör bulunamadı: {}", root.display());
+        let root = root.display();
+        eprintln!("{}", tf!("Klasör bulunamadı: {root}", "Folder not found: {root}", "Carpeta no encontrada: {root}"));
         std::process::exit(1);
     }
     let telemetry = Telemetry::load();
@@ -64,6 +70,7 @@ fn main() -> io::Result<()> {
         deleting: None,
         status: String::new(),
         telemetry,
+        plan: Plan::load(),
     };
     app.start_scan();
     app.send_opened();
@@ -128,9 +135,12 @@ impl App {
             if let Some(done) = self.deleting.as_ref().and_then(|d| d.poll()) {
                 let ok = self.deleting.take().unwrap().total - done.failed.len();
                 self.telemetry.clean_done("tui", ok, done.freed);
-                self.status = format!("{ok} öğe temizlendi ({})", human_size(done.freed));
+                self.plan.record_clean(done.freed);
+                let freed = human_size(done.freed);
+                self.status = tf!("{ok} öğe temizlendi ({freed})", "{ok} items cleaned ({freed})", "{ok} elementos limpiados ({freed})");
                 if let Some(err) = done.first_error {
-                    self.status += &format!(", {} tamamen silinemedi: {err}", done.failed.len());
+                    let n = done.failed.len();
+                    self.status += &tf!(", {n} tamamen silinemedi: {err}", ", {n} not fully deleted: {err}", ", {n} no se borraron del todo: {err}");
                 }
                 self.items.extend(done.failed);
             }
@@ -144,16 +154,21 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            let yes = matches!(key.code, KeyCode::Char('e' | 'E' | 'y' | 'Y'));
+            // Yes/no keys of the UI language: evet/hayır, yes/no, sí/no.
+            let (y, n) = match i18n::lang() {
+                Lang::Tr => ('e', 'h'),
+                Lang::En => ('y', 'n'),
+                Lang::Es => ('s', 'n'),
+            };
+            let yes = matches!(key.code, KeyCode::Char(c) if c.to_ascii_lowercase() == y);
+            let no = matches!(key.code, KeyCode::Char(c) if c.to_ascii_lowercase() == n) || key.code == KeyCode::Esc;
             match std::mem::replace(&mut self.prompt, Prompt::None) {
                 Prompt::Consent => match key.code {
                     _ if yes => {
                         self.telemetry.set_consent(true);
                         self.send_opened();
                     }
-                    KeyCode::Char('h' | 'H' | 'n' | 'N') | KeyCode::Esc => {
-                        self.telemetry.set_consent(false)
-                    }
+                    _ if no => self.telemetry.set_consent(false),
                     _ => self.prompt = Prompt::Consent,
                 },
                 p @ (Prompt::Trash | Prompt::Delete) => {
@@ -166,7 +181,7 @@ impl App {
                         ));
                         self.status.clear();
                     } else {
-                        self.status = "Vazgeçildi".into();
+                        self.status = t("Vazgeçildi", "Cancelled", "Cancelado").into();
                     }
                 }
                 // Quitting, rescanning or a second deletion must wait for the running one.
@@ -177,7 +192,12 @@ impl App {
                             KeyCode::Char('q' | 'd' | 'D' | 'r') | KeyCode::Esc
                         ) =>
                 {
-                    self.status = "Silme sürüyor, lütfen bekleyin…".into();
+                    self.status = t(
+                        "Silme sürüyor, lütfen bekleyin…",
+                        "Deleting, please wait…",
+                        "Borrando, espera por favor…",
+                    )
+                    .into();
                 }
                 Prompt::None => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -210,8 +230,20 @@ impl App {
                     ),
                     // The final scan list would bring deleted items back, so deleting waits for it.
                     KeyCode::Char('d' | 'D') if self.scanning.is_some() => {
-                        self.status =
-                            "Kopyalar hâlâ karşılaştırılıyor, tarama bitince silebilirsiniz.".into()
+                        self.status = t(
+                            "Kopyalar hâlâ karşılaştırılıyor, tarama bitince silebilirsiniz.",
+                            "Duplicates are still being compared; you can delete when the scan ends.",
+                            "Todavía se comparan los duplicados; podrás borrar cuando termine el análisis.",
+                        )
+                        .into()
+                    }
+                    KeyCode::Char('d' | 'D') if self.plan.clean_left().is_some_and(|left| self.selected_totals().1 > left) => {
+                        let left = human_size(self.plan.clean_left().unwrap_or(0));
+                        self.status = tf!(
+                            "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız için: deskMonk uygulaması → ⭐ Pro",
+                            "The free plan cleans 2 GB a day; {left} left today. For no limit: deskMonk app → ⭐ Get Pro",
+                            "El plan gratuito limpia 2 GB al día; quedan {left} hoy. Sin límite: app deskMonk → ⭐ Pasar a Pro"
+                        );
                     }
                     KeyCode::Char('d') if self.selected_totals().0 > 0 => {
                         self.prompt = Prompt::Trash
@@ -223,8 +255,16 @@ impl App {
                     KeyCode::Char('t') if telemetry::URL.is_some() => {
                         let on = self.telemetry.consent != Some(true);
                         self.telemetry.set_consent(on);
-                        self.status =
-                            format!("Anonim istatistik: {}", if on { "açık" } else { "kapalı" });
+                        self.status = if on {
+                            t("Anonim istatistik: açık", "Anonymous stats: on", "Estadísticas anónimas: activadas")
+                        } else {
+                            t("Anonim istatistik: kapalı", "Anonymous stats: off", "Estadísticas anónimas: desactivadas")
+                        }
+                        .into();
+                    }
+                    KeyCode::Char('l') => {
+                        let next = i18n::ALL.iter().position(|l| *l == i18n::lang()).map_or(0, |i| i + 1);
+                        i18n::set(i18n::ALL[next % i18n::ALL.len()]);
                     }
                     _ => {}
                 },
@@ -244,14 +284,16 @@ impl App {
 
         let scanning = match (&self.scanning, &self.deleting) {
             (Some(_), _) if self.phase == Some(Phase::Comparing) => {
-                "  — kopyalar karşılaştırılıyor…".to_string()
+                t("  — kopyalar karşılaştırılıyor…", "  — comparing duplicates…", "  — comparando duplicados…").to_string()
             }
-            (Some((_, p)), _) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
-            (_, Some(d)) => format!(
-                "  — siliniyor… {}/{}",
-                d.done.load(Ordering::Relaxed),
-                d.total
-            ),
+            (Some((_, p)), _) => {
+                let n = p.load(Ordering::Relaxed);
+                tf!("  — taranıyor… {n} dosya", "  — scanning… {n} files", "  — analizando… {n} archivos")
+            }
+            (_, Some(d)) => {
+                let (done, total) = (d.done.load(Ordering::Relaxed), d.total);
+                tf!("  — siliniyor… {done}/{total}", "  — deleting… {done}/{total}", "  — borrando… {done}/{total}")
+            }
             _ => String::new(),
         };
         f.render_widget(
@@ -304,33 +346,60 @@ impl App {
 
         let (n, size) = self.selected_totals();
         f.render_widget(
-            Paragraph::new(format!(
-                "Seçili: {n} dosya — Kazanılacak alan: {}   {}",
-                human_size(size),
-                self.status
-            ))
+            Paragraph::new({
+                let (gain, status) = (human_size(size), &self.status);
+                tf!(
+                    "Seçili: {n} dosya — Kazanılacak alan: {gain}   {status}",
+                    "Selected: {n} files — Space to free: {gain}   {status}",
+                    "Seleccionados: {n} archivos — Espacio a liberar: {gain}   {status}"
+                )
+            })
             .bold(),
             footer,
         );
         let tkey = if telemetry::URL.is_some() {
-            "  t istatistik"
+            t("  t istatistik", "  t stats", "  t estadísticas")
         } else {
             ""
         };
-        f.render_widget(Paragraph::new(format!("↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d temizle  D hepsini kalıcı sil  r yeniden tara{tkey}  q çık")).dim(), help);
+        let keys = tf!(
+            "↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d temizle  D hepsini kalıcı sil  r yeniden tara{tkey}  l dil  q çık",
+            "↑↓ move  space select  a/n all/none  ←→ category  d clean  D delete all for good  r rescan{tkey}  l language  q quit",
+            "↑↓ mover  espacio elegir  a/n todo/nada  ←→ categoría  d limpiar  D borrar todo definitivamente  r reanalizar{tkey}  l idioma  q salir"
+        );
+        f.render_widget(Paragraph::new(keys).dim(), help);
 
         let text = match self.prompt {
             Prompt::None => return,
-            Prompt::Consent => "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) ve donanım bilgileri\n(işlemci, bellek, disk, ekran kartı, pil: marka, model, doluluk) gönderilsin mi?\nDosya adları, yollar, seri numaraları ve kullanıcı adı asla gönderilmez.  [e]vet / [h]ayır".to_string(),
-            Prompt::Trash => format!("{n} öğe ({}) temizlenecek: gereksiz dosyalar kalıcı silinir, diğerleri çöp kutusuna taşınır. Emin misiniz? [e/h]", human_size(size)),
-            Prompt::Delete => format!("{n} dosya ({}) KALICI olarak silinecek, geri alınamaz! Emin misiniz? [e/h]", human_size(size)),
+            Prompt::Consent => t(
+                "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) ve donanım bilgileri\n(işlemci, bellek, disk, ekran kartı, pil: marka, model, doluluk) gönderilsin mi?\nDosya adları, yollar, seri numaraları ve kullanıcı adı asla gönderilmez.  [e]vet / [h]ayır",
+                "Send anonymous usage stats (file count, size, operating system) and hardware info\n(processor, memory, disk, graphics, battery: brand, model, usage)?\nFile names, paths, serial numbers and user names are never sent.  [y]es / [n]o",
+                "¿Enviar estadísticas de uso anónimas (cantidad de archivos, tamaño, sistema operativo) e información\nde hardware (procesador, memoria, disco, gráficos, batería: marca, modelo, uso)?\nNunca se envían nombres de archivo, rutas, números de serie ni nombres de usuario.  [s]í / [n]o",
+            )
+            .to_string(),
+            Prompt::Trash => {
+                let size = human_size(size);
+                tf!(
+                    "{n} öğe ({size}) temizlenecek: gereksiz dosyalar kalıcı silinir, diğerleri çöp kutusuna taşınır. Emin misiniz? [e/h]",
+                    "{n} items ({size}) will be cleaned: junk is deleted for good, the rest goes to the trash. Are you sure? [y/n]",
+                    "Se limpiarán {n} elementos ({size}): los archivos basura se borran definitivamente y el resto va a la papelera. ¿Seguro? [s/n]"
+                )
+            }
+            Prompt::Delete => {
+                let size = human_size(size);
+                tf!(
+                    "{n} dosya ({size}) KALICI olarak silinecek, geri alınamaz! Emin misiniz? [e/h]",
+                    "{n} files ({size}) will be deleted FOR GOOD, this cannot be undone! Are you sure? [y/n]",
+                    "Se borrarán DEFINITIVAMENTE {n} archivos ({size}), ¡no se puede deshacer! ¿Seguro? [s/n]"
+                )
+            }
         };
         let area = centered(f.area(), 70, 5);
         f.render_widget(Clear, area);
         f.render_widget(
             Paragraph::new(text)
                 .wrap(ratatui::widgets::Wrap { trim: true })
-                .block(Block::bordered().title(" Onay ")),
+                .block(Block::bordered().title(t(" Onay ", " Confirm ", " Confirmar "))),
             area,
         );
     }

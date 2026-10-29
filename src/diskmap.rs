@@ -8,7 +8,7 @@ pub struct Node {
     pub name: String,
     pub size: u64,
     pub dir: bool,
-    /// Biggest first. Small entries are merged into one "küçük öğeler" node, so a home folder with
+    /// Biggest first. Small entries are merged into one "small items" node, so a home folder with
     /// millions of files stays a few MB in memory and the map only holds boxes big enough to see.
     pub children: Vec<Node>,
 }
@@ -56,7 +56,7 @@ fn walk(path: &Path, name: String, dev: Option<u64>, files: &AtomicUsize) -> Nod
     if children.len() > KEEP {
         let rest = children.split_off(KEEP - 1);
         children.push(Node {
-            name: format!("{} küçük öğe", rest.len()),
+            name: crate::tf!("{} küçük öğe", "{} small items", "{} elementos pequeños", rest.len()),
             size: rest.iter().map(|c| c.size).sum(),
             dir: false,
             children: Vec::new(),
@@ -142,6 +142,6 @@ mod tests {
         assert_eq!(tree.size, 5500);
         assert_eq!(tree.children.len(), KEEP);
         assert_eq!((tree.children[0].name.as_str(), tree.children[0].size), ("big", 5000));
-        assert_eq!(tree.children[KEEP - 1].name, "12 küçük öğe");
+        assert_eq!(tree.children[KEEP - 1].name, "12 small items");
     }
 }

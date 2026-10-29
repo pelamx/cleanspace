@@ -1,3 +1,4 @@
+use crate::i18n::t;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -39,10 +40,10 @@ impl Category {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Duplicate => "Kopyalar",
-            Self::Junk => "Gereksiz dosyalar",
-            Self::OldDownload => "Eski indirmeler",
-            Self::Large => "Büyük dosyalar",
+            Self::Duplicate => t("Kopyalar", "Duplicates", "Duplicados"),
+            Self::Junk => t("Gereksiz dosyalar", "Junk files", "Archivos basura"),
+            Self::OldDownload => t("Eski indirmeler", "Old downloads", "Descargas antiguas"),
+            Self::Large => t("Büyük dosyalar", "Large files", "Archivos grandes"),
         }
     }
 }
@@ -58,10 +59,10 @@ pub struct Item {
 }
 
 impl Item {
-    /// Name to show: the file or folder name, "Çöp Kutusu" for the OS trash.
+    /// Name to show: the file or folder name, "Trash" for the OS trash.
     pub fn name(&self) -> String {
         if trash_dir().as_ref() == Some(&self.path) {
-            return "Çöp Kutusu".into();
+            return t("Çöp Kutusu", "Trash", "Papelera").into();
         }
         self.path
             .file_name()

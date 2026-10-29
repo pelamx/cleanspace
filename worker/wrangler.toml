@@ -13,3 +13,10 @@ database_name = "cleanspace-stats"
 database_id = "21dfe637-f8c8-4edf-b9ff-c4ec4b19c492"
 
 # Secret, not here: ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN), the /admin password for user "admin".
+
+# deskMonk Pro (Paddle). "sandbox" until real sales start, then "production" with the live price IDs.
+# Secrets, not here: PADDLE_CLIENT_TOKEN, PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET (wrangler secret put …).
+[vars]
+PADDLE_ENV = "sandbox"
+PADDLE_PRICE_MONTHLY = ""
+PADDLE_PRICE_YEARLY = ""
