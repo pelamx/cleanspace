@@ -29,6 +29,7 @@ struct App {
     list: ListState,
     scanning: Option<(Receiver<Vec<Item>>, Arc<AtomicUsize>)>,
     prompt: Prompt,
+    deleting: Option<cleanspace::Deletion>,
     status: String,
     telemetry: Telemetry,
 }
@@ -56,6 +57,7 @@ fn main() -> io::Result<()> {
         list: ListState::default(),
         scanning: None,
         prompt,
+        deleting: None,
         status: String::new(),
         telemetry,
     };
@@ -98,6 +100,15 @@ impl App {
                 self.scanning = None;
                 self.list.select(Some(0));
             }
+            if let Some((failed, freed)) = self.deleting.as_ref().and_then(|d| d.poll()) {
+                let ok = self.deleting.take().unwrap().total - failed.len();
+                self.telemetry.clean_done("tui", ok, freed);
+                self.status = format!("{ok} öğe temizlendi ({})", human_size(freed));
+                if !failed.is_empty() {
+                    self.status += &format!(", {} başarısız (hâlâ seçili)", failed.len());
+                }
+                self.items.extend(failed);
+            }
             terminal.draw(|f| self.draw(f))?;
             if !event::poll(Duration::from_millis(100))? {
                 continue;
@@ -119,25 +130,26 @@ impl App {
                 },
                 p @ (Prompt::Trash | Prompt::Delete) => {
                     if yes {
-                        let permanent = p == Prompt::Delete;
-                        let (ok, failed, freed) =
-                            cleanspace::delete_selected(&mut self.items, permanent);
-                        self.telemetry.clean_done("tui", ok, freed);
-                        self.status = format!(
-                            "{ok} dosya {} ({})",
-                            if permanent {
-                                "silindi"
-                            } else {
-                                "çöpe taşındı"
-                            },
-                            human_size(freed)
-                        );
-                        if failed > 0 {
-                            self.status += &format!(", {failed} başarısız");
-                        }
+                        // Runs in the background; the screen keeps updating with progress.
+                        self.deleting = Some(cleanspace::Deletion::start(
+                            &mut self.items,
+                            p == Prompt::Delete,
+                            || {},
+                        ));
+                        self.status.clear();
                     } else {
                         self.status = "Vazgeçildi".into();
                     }
+                }
+                // Quitting, rescanning or a second deletion must wait for the running one.
+                Prompt::None
+                    if self.deleting.is_some()
+                        && matches!(
+                            key.code,
+                            KeyCode::Char('q' | 'd' | 'D' | 'r') | KeyCode::Esc
+                        ) =>
+                {
+                    self.status = "Silme sürüyor, lütfen bekleyin…".into();
                 }
                 Prompt::None => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -196,9 +208,14 @@ impl App {
         ])
         .areas(f.area());
 
-        let scanning = match &self.scanning {
-            Some((_, p)) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
-            None => String::new(),
+        let scanning = match (&self.scanning, &self.deleting) {
+            (Some((_, p)), _) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
+            (_, Some(d)) => format!(
+                "  — siliniyor… {}/{}",
+                d.done.load(Ordering::Relaxed),
+                d.total
+            ),
+            _ => String::new(),
         };
         f.render_widget(
             Paragraph::new(format!(

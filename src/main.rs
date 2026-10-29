@@ -134,7 +134,7 @@ fn description(cat: Category) -> &'static str {
             "İçeriği birebir aynı dosyalar. Her grubun ilk kopyası korunur, fazlası seçilir."
         }
         Category::Junk => {
-            "Geçici dosyalar, yedekler, loglar ve sistem artıkları (.tmp, .bak, .log, .DS_Store, Thumbs.db…)."
+            "Uygulama önbellekleri, çöp kutusu, geçici dosyalar, yedekler ve loglar. Önbellekler gerektiğinde yeniden oluşturulur."
         }
         Category::OldDownload => {
             "İndirilenler klasöründe 90 günden uzun süredir değişmemiş dosyalar."
@@ -158,6 +158,7 @@ struct App {
     scanned_files: usize,
     has_scanned: bool,
     confirm: bool,
+    deleting: Option<cleanspace::Deletion>,
     status: String,
     telemetry: Telemetry,
     autostart: bool,
@@ -173,6 +174,7 @@ impl Default for App {
             scanned_files: 0,
             has_scanned: false,
             confirm: false,
+            deleting: None,
             status: String::new(),
             telemetry: Telemetry::load(),
             autostart: false,
@@ -199,16 +201,25 @@ impl App {
         self.scanning = Some((rx, progress));
     }
 
-    fn delete_selected(&mut self) {
-        let (ok, failed, freed) = cleanspace::delete_selected(&mut self.items, false);
+    fn delete_selected(&mut self, ctx: egui::Context) {
+        self.deleting = Some(cleanspace::Deletion::start(
+            &mut self.items,
+            false,
+            move || ctx.request_repaint(),
+        ));
+    }
+
+    fn poll_deletion(&mut self) {
+        let Some((failed, freed)) = self.deleting.as_ref().and_then(|d| d.poll()) else {
+            return;
+        };
+        let ok = self.deleting.take().unwrap().total - failed.len();
         self.telemetry.clean_done("gui", ok, freed);
-        self.status = format!(
-            "✔ {ok} dosya çöp kutusuna taşındı, {} yer açıldı",
-            human_size(freed)
-        );
-        if failed > 0 {
-            self.status += &format!(" · {failed} dosya taşınamadı");
+        self.status = format!("✔ {ok} öğe temizlendi, {} yer açıldı", human_size(freed));
+        if !failed.is_empty() {
+            self.status += &format!(" · {} öğe silinemedi (hâlâ seçili)", failed.len());
         }
+        self.items.extend(failed);
     }
 
     fn totals(&self, cat: Option<Category>, only_selected: bool) -> (usize, u64) {
@@ -267,7 +278,8 @@ impl App {
     }
 
     fn header(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        let scanning = self.scanning.is_some();
+        // Disables the controls; the deletion would otherwise race with a new scan.
+        let scanning = self.scanning.is_some() || self.deleting.is_some();
         card(ui, |ui| {
             let edit = egui::TextEdit::singleline(&mut self.root)
                 .hint_text("Taranacak klasör")
@@ -275,7 +287,7 @@ impl App {
             ui.add_sized([ui.available_width(), 34.0], edit);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    let label = if scanning {
+                    let label = if self.scanning.is_some() {
                         "Taranıyor…"
                     } else {
                         "🔍  Tara"
@@ -354,7 +366,7 @@ impl App {
                 &mut cols[2],
                 "Taranan dosya",
                 &scanned.to_string(),
-                if scanning {
+                if self.scanning.is_some() {
                     "tarama sürüyor…"
                 } else {
                     "toplam"
@@ -481,7 +493,19 @@ impl App {
                     .fill(DANGER)
                     .min_size(vec2(170.0, 40.0))
                     .corner_radius(10);
-                if ui
+                if let Some(d) = &self.deleting {
+                    let done = d.done.load(Ordering::Relaxed);
+                    let bar = egui::ProgressBar::new(done as f32 / d.total.max(1) as f32)
+                        .desired_width(220.0)
+                        .desired_height(40.0)
+                        .fill(ACCENT)
+                        .text(
+                            RichText::new(format!("Siliniyor… {done}/{}", d.total))
+                                .color(Color32::WHITE),
+                        )
+                        .animate(true);
+                    ui.add(bar);
+                } else if ui
                     .add_enabled(n > 0 && self.scanning.is_none(), button)
                     .clicked()
                 {
@@ -510,6 +534,10 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         if std::mem::take(&mut self.autostart) {
             self.start_scan(ctx.clone());
+        }
+        self.poll_deletion();
+        if self.deleting.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
         if let Some((rx, progress)) = &self.scanning {
             if let Ok(items) = rx.try_recv() {
@@ -568,7 +596,7 @@ impl eframe::App for App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let go = egui::Button::new(RichText::new("Temizle").strong().color(Color32::WHITE)).fill(DANGER);
                     if ui.add(go).clicked() {
-                        self.delete_selected();
+                        self.delete_selected(ctx.clone());
                         self.confirm = false;
                     }
                     if ui.button("Vazgeç").clicked() {

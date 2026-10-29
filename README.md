@@ -11,14 +11,19 @@ Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windo
 
 ## Kategoriler
 
-- **Kopyalar**: aynı boyut + aynı SHA-256 içerik. Her grubun ilk kopyası seçilmez.
-- **Gereksiz**: `.tmp .temp .bak .old .log .crdownload .part .dmp`, `*~`, `.DS_Store`, `Thumbs.db`, `desktop.ini` (varsayılan seçili).
+- **Kopyalar**: aynı boyut, aynı ilk 64 KB ve aynı SHA-256 içerik (32 KB üstü dosyalar). Her grubun ilk kopyası korunur.
+  Fazla kopyalar sadece kullanıcı klasörlerinde (İndirilenler, Belgeler, Masaüstü, Resimler, Müzik, Videolar) otomatik seçilir.
+  Gizli klasörler ve git repoları kopya aramasına girmez, çünkü bunlar uygulama ya da proje dosyalarıdır.
+- **Gereksiz**: uygulama önbellekleri (`~/.cache`, `~/Library/Caches`, Windows'ta `%TEMP%`), çöp kutusu, npm önbelleği.
+  Her biri uygulama başına tek satır olarak listelenir. Ayrıca `.tmp .temp .bak .old .log .crdownload .part .dmp`, `*~`,
+  `.DS_Store`, `Thumbs.db` ve `desktop.ini` dosyaları da bu kategoriye girer.
 - **Eski indirmeler**: İndirilenler klasöründe 90 günden eski dosyalar.
 - **Büyük dosyalar**: 500 MB ve üzeri.
 
 Her dosya tek bir kategoride listelenir, yani boyutlar iki kez sayılmaz. Sembolik linkler takip edilmez.
-Masaüstü uygulaması dosyaları çöp kutusuna taşır. TUI'de `d` ile çöpe taşınır, `D` ile kalıcı olarak silinir
-(sunucularda çöp kutusu yer açmaz).
+`.git` ve `node_modules` klasörlerine hiç girilmez. Silme işlemi arka planda çalışır ve arayüz donmaz.
+Masaüstü uygulaması dosyaları çöp kutusuna taşır (çöp kutusundakiler kalıcı silinir). TUI'de `d` ile çöpe taşınır,
+`D` ile kalıcı olarak silinir (sunucularda çöp kutusu yer açmaz).
 
 ## Derleme
 
