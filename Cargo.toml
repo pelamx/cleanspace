@@ -46,3 +46,16 @@ objc2-foundation = { version = "0.3", optional = true, default-features = false,
 [target.'cfg(unix)'.dependencies]
 # Already in the tree; statvfs and page-cache control for the disk speed test.
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree via eframe and crossterm; free space, locale, time zone and the app lock's process list.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+] }

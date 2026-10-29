@@ -1,4 +1,4 @@
-//! App lock (macOS): opening a locked app needs the deskMonk password.
+//! App lock (macOS and Windows): opening a locked app needs the deskMonk password.
 //! A privacy lock while deskMonk runs, not a security boundary: quitting deskMonk lifts it.
 
 use sha2::{Digest, Sha256};
@@ -75,13 +75,30 @@ impl Config {
 }
 
 /// Apps that must never be locked: killing them breaks the desktop or relaunches in a loop.
+#[cfg(not(windows))]
 pub fn can_lock(app: &Path) -> bool {
     app.extension().is_some_and(|e| e == "app")
         && !app.starts_with("/System/Library/CoreServices")
         && std::env::current_exe().map_or(true, |me| !me.starts_with(app))
 }
 
+/// Windows: anything under %SystemRoot% runs the desktop itself, and an uninstaller is not an app.
+#[cfg(windows)]
+pub fn can_lock(app: &Path) -> bool {
+    // Windows paths are case-insensitive, and %SystemRoot% is spelled "C:\WINDOWS" on many machines,
+    // so Path::starts_with (which compares components byte for byte) would miss it.
+    let key = |p: &Path| p.to_string_lossy().to_lowercase().replace('/', "\\");
+    let system = std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    let path = key(app);
+    let stem = app.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+    app.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        && !path.starts_with(&format!("{}\\", key(&system).trim_end_matches('\\')))
+        && !stem.starts_with("unins")
+        && std::env::current_exe().map_or(true, |me| key(&me) != path)
+}
+
 /// Lockable .app bundles in the usual app folders (and one folder deeper, e.g. /Applications/Adobe X/), sorted by name.
+#[cfg(not(windows))]
 pub fn installed_apps() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities"]
         .map(PathBuf::from)
@@ -91,12 +108,10 @@ pub fn installed_apps() -> Vec<PathBuf> {
     for dir in dirs {
         apps_in(&dir, 1, &mut apps);
     }
-    apps.retain(|a| can_lock(a));
-    apps.sort_by_key(|a| a.file_stem().unwrap_or_default().to_string_lossy().to_lowercase());
-    apps.dedup();
-    apps
+    sorted(apps)
 }
 
+#[cfg(not(windows))]
 fn apps_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     for path in fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()) {
         if path.extension().is_some_and(|e| e == "app") {
@@ -105,6 +120,54 @@ fn apps_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
             apps_in(&path, depth - 1, out);
         }
     }
+}
+
+/// Windows has no app bundles, so the program folders are walked instead, see [`apps_in`].
+#[cfg(windows)]
+pub fn installed_apps() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .collect();
+    // Per-user installs (Chrome, VS Code, Spotify, most Electron apps) live here, not in Program Files.
+    dirs.extend(dirs::data_local_dir().map(|d| d.join("Programs")));
+    let mut apps = Vec::new();
+    for dir in dirs {
+        apps_in(&dir, 2, &mut apps);
+    }
+    sorted(apps)
+}
+
+/// One app per folder: the .exe named after its folder, else the biggest one. An app folder also
+/// holds updaters, crash handlers and helper processes, and listing all of them is unusable.
+#[cfg(windows)]
+fn apps_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    let folder = dir.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    let mut best: Option<(bool, u64, PathBuf)> = None;
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        let path = entry.path();
+        if meta.is_dir() {
+            if depth > 0 {
+                apps_in(&path, depth - 1, out);
+            }
+        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+            let named = path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase() == folder;
+            let candidate = (named, meta.len(), path);
+            if best.as_ref().is_none_or(|b| (b.0, b.1) < (candidate.0, candidate.1)) {
+                best = Some(candidate);
+            }
+        }
+    }
+    out.extend(best.map(|(_, _, path)| path));
+}
+
+fn sorted(mut apps: Vec<PathBuf>) -> Vec<PathBuf> {
+    apps.retain(|a| can_lock(a));
+    apps.sort_by_key(|a| a.file_stem().unwrap_or_default().to_string_lossy().to_lowercase());
+    apps.dedup();
+    apps
 }
 
 #[derive(Default)]
@@ -178,10 +241,7 @@ impl Watcher {
                 let (kill, ask) = state.lock().unwrap().check(&procs, Instant::now());
                 for pid in kill {
                     // Just launched, so nothing unsaved is lost.
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(pid, libc::SIGKILL);
-                    }
+                    stop(pid);
                 }
                 ask.into_iter().for_each(&on_blocked);
             }
@@ -200,7 +260,20 @@ impl Watcher {
         let mut state = self.0.lock().unwrap();
         state.allowed.insert(app.to_path_buf(), Some(Instant::now()));
         state.pending.remove(app);
-        let _ = std::process::Command::new("open").arg(app).spawn();
+        // macOS opens the bundle; on Windows the path is the executable itself.
+        let mut command = if cfg!(target_os = "macos") {
+            let mut open = std::process::Command::new("open");
+            open.arg(app);
+            open
+        } else {
+            let mut exe = std::process::Command::new(app);
+            // Without this the app inherits deskMonk's folder as its working directory.
+            if let Some(dir) = app.parent() {
+                exe.current_dir(dir);
+            }
+            exe
+        };
+        let _ = command.spawn();
     }
 
     /// Prompt closed without the password: the next launch asks again.
@@ -228,16 +301,66 @@ fn processes() -> Vec<(i32, PathBuf)> {
         .collect()
 }
 
-// shortcut: app lock is macOS only; Windows/Linux would need their own process listing.
-#[cfg(not(target_os = "macos"))]
+/// Windows: one snapshot gives every process's executable name. The name is all [`runs_from`] needs,
+/// and opening a handle per process three times a second to read its full path is not worth it.
+#[cfg(windows)]
+fn processes() -> Vec<(i32, PathBuf)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    };
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let me = std::process::id();
+    let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+    let mut procs = Vec::new();
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) };
+    while more != 0 {
+        let name = &entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)];
+        if entry.th32ProcessID != me && !name.is_empty() {
+            procs.push((entry.th32ProcessID as i32, PathBuf::from(String::from_utf16_lossy(name))));
+        }
+        more = unsafe { Process32NextW(snapshot, &mut entry) };
+    }
+    unsafe { CloseHandle(snapshot) };
+    procs
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn processes() -> Vec<(i32, PathBuf)> {
     Vec::new()
 }
+
+/// Kills a process that was just launched, so nothing unsaved is lost.
+#[cfg(unix)]
+fn stop(pid: i32) {
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+}
+
+#[cfg(windows)]
+fn stop(pid: i32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    // Fails for processes of other users and for elevated ones, which this lock does not reach anyway.
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid as u32) };
+    if !handle.is_null() {
+        unsafe {
+            TerminateProcess(handle, 1);
+            CloseHandle(handle);
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn stop(_: i32) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn finds_apps_one_folder_deep() {
         let dir = std::env::temp_dir().join(format!("deskmonk-apps-{}", std::process::id()));
@@ -249,6 +372,38 @@ mod tests {
         found.sort();
         fs::remove_dir_all(&dir).unwrap();
         assert_eq!(found, vec![dir.join("A.app"), dir.join("Suite/B.app")]);
+    }
+
+    /// One exe per folder: named after the folder wins, otherwise the biggest.
+    #[cfg(windows)]
+    #[test]
+    fn picks_one_exe_per_program_folder() {
+        let dir = std::env::temp_dir().join(format!("deskmonk-apps-{}", std::process::id()));
+        for (file, size) in [
+            ("Vendor/Editor/Editor.exe", 10),      // named after its folder, though not the biggest
+            ("Vendor/Editor/crashpad.exe", 900),
+            ("Vendor/Editor/readme.txt", 999),
+            ("Player/big.exe", 500),               // no name match, so the biggest wins
+            ("Player/small.exe", 20),
+            ("Deep/Down/Here/hidden.exe", 10),     // past the depth limit
+            ("Setup/unins000.exe", 400),           // an uninstaller is not an app
+        ] {
+            let path = dir.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, vec![0; size]).unwrap();
+        }
+        let mut found = Vec::new();
+        apps_in(&dir, 2, &mut found);
+        let found = sorted(found);
+        fs::remove_dir_all(&dir).unwrap();
+        // sorted() orders by name: "big" before "Editor".
+        assert_eq!(found, vec![dir.join("Player/big.exe"), dir.join("Vendor/Editor/Editor.exe")]);
+        // %SystemRoot% is "C:\WINDOWS" on most machines: the check must not care about case.
+        assert!(!can_lock(Path::new(r"C:\Windows\System32\winlogon.exe")), "the desktop must stay unlockable");
+        assert!(!can_lock(Path::new(r"c:\windows\explorer.exe")), "the desktop must stay unlockable");
+        assert!(can_lock(Path::new(r"C:\Windows Apps\App\app.exe")), "a folder that merely starts the same way is fine");
+        assert!(!can_lock(Path::new(r"C:\Program Files\App\notes.txt")));
+        assert!(can_lock(Path::new(r"C:\Program Files\App\app.exe")));
     }
 
     #[test]

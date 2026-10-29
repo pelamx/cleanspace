@@ -100,7 +100,18 @@ fn system() -> Option<Lang> {
         // "(\n    \"tr-TR\",\n    \"en-US\"\n)": the first entry is the preferred one.
         return String::from_utf8_lossy(&out.stdout).split('"').nth(1).and_then(Lang::from_locale);
     }
-    // shortcut: Windows reads no env locale; GetUserDefaultLocaleName would fix that, the picker covers it meanwhile.
+    // Windows sets none of those variables; the user's display language lives in the locale API.
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+        // LOCALE_NAME_MAX_LENGTH, the most the API ever writes.
+        let mut buf = [0u16; 85];
+        let len = unsafe { GetUserDefaultLocaleName(buf.as_mut_ptr(), buf.len() as i32) };
+        // The count includes the trailing NUL, e.g. "tr-TR\0" is 6.
+        if len > 1 {
+            return Lang::from_locale(&String::from_utf16_lossy(&buf[..len as usize - 1]));
+        }
+    }
     None
 }
 

@@ -127,14 +127,61 @@ impl Places {
     }
 }
 
-/// The OS trash folder. None on Windows, whose Recycle Bin is not a plain folder.
+/// The OS trash folder.
+#[cfg(not(windows))]
 pub fn trash_dir() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         dirs::home_dir().map(|h| h.join(".Trash"))
-    } else if cfg!(windows) {
-        None
     } else {
         dirs::data_dir().map(|d| d.join("Trash"))
+    }
+}
+
+/// Windows names each user's Recycle Bin after their SID, and `$Recycle.Bin` holds one folder per
+/// user of the machine. Emptying someone else's is not an option, so the SID is read from this
+/// process's own token. Looked up once: [`is_in_trash`] runs for every scanned file.
+#[cfg(windows)]
+pub fn trash_dir() -> Option<PathBuf> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        // %SystemDrive% is a bare "C:", and joining onto that gives a path relative to the current
+        // folder on C:, not the root. The separator has to be written out.
+        let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        let dir = PathBuf::from(format!("{}\\$Recycle.Bin", drive.to_string_lossy())).join(user_sid()?);
+        dir.is_dir().then_some(dir)
+    })
+    .clone()
+}
+
+/// This process's user SID, in the "S-1-5-21-…" form the Recycle Bin folders are named after.
+#[cfg(windows)]
+fn user_sid() -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        // TOKEN_USER is followed by the SID it points at, so the size has to be asked for first.
+        let mut len = 0;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        let mut buf = vec![0u8; len as usize];
+        let read = len > 0 && GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) != 0;
+        CloseHandle(token);
+        if !read {
+            return None;
+        }
+        let mut text: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(buf.as_ptr().cast::<TOKEN_USER>().read_unaligned().User.Sid, &mut text) == 0 {
+            return None;
+        }
+        let len = (0..).find(|&i| *text.add(i) == 0)?;
+        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+        LocalFree(text.cast());
+        Some(sid)
     }
 }
 
@@ -354,6 +401,43 @@ pub fn human_size(bytes: u64) -> String {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Finding the *right* Recycle Bin matters: `$Recycle.Bin` also holds other users' folders, and
+    /// the app empties whatever this returns. Only the file put there by this test is cleaned up.
+    #[cfg(windows)]
+    #[test]
+    fn finds_this_users_recycle_bin_and_can_delete_from_it() {
+        let dir = trash_dir().expect("a Recycle Bin folder");
+        let sid = dir.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(sid.starts_with("S-1-5-21-"), "{sid} is not a real user SID");
+        assert!(!sid.ends_with("-500") && sid != "S-1-5-18", "{sid} is a built-in account");
+
+        let stem = format!("deskmonk-trash-{}", std::process::id());
+        let file = std::env::temp_dir().join(format!("{stem}.txt"));
+        fs::write(&file, "x").unwrap();
+        trash::delete(&file).unwrap();
+        // The shell reports the name as the user sees it, without ".txt" when extensions are hidden.
+        let mut mine: Vec<_> = trash::os_limited::list()
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.name.to_string_lossy().starts_with(&stem))
+            .collect();
+        assert_eq!(mine.len(), 1, "the file should now be in the Recycle Bin");
+        // The shell's own idea of where the file went must be the folder we found.
+        assert!(Path::new(&mine[0].id).starts_with(&dir), "{:?} is not under {dir:?}", mine[0].id);
+        assert!(is_in_trash(Path::new(&mine[0].id)));
+
+        // The app deletes Recycle Bin entries as plain files, so prove that works on the real thing.
+        let data = PathBuf::from(&mine[0].id);
+        crate::remove(&data).expect("the app can delete a Recycle Bin entry");
+        assert!(!data.exists());
+        // Each entry is a "$R..." file of data beside an "$I..." file of metadata; removing only the
+        // data would leave a ghost entry in the Bin, which is why the app deletes the whole folder.
+        let info = data.with_file_name(data.file_name().unwrap().to_string_lossy().replacen("$R", "$I", 1));
+        assert!(info.is_file(), "expected {info:?} beside the data file");
+        crate::remove(&info).unwrap();
+        mine.clear();
+    }
 
     #[test]
     fn classifies_files() {

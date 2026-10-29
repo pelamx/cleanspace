@@ -28,8 +28,18 @@ pub fn disk_space(dir: &Path) -> Option<(u64, u64)> {
         .then(|| (stat.f_blocks as u64 * stat.f_frsize as u64, stat.f_bavail as u64 * stat.f_frsize as u64))
 }
 
-// shortcut: Windows has no statvfs; GetDiskFreeSpaceExW (windows-sys) would fill this in when needed.
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn disk_space(dir: &Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let path: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let (mut free, mut total) = (0, 0);
+    // Free *to this user*: a disk quota can make it smaller than the volume's own free space.
+    (unsafe { GetDiskFreeSpaceExW(path.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) } != 0)
+        .then_some((total, free))
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn disk_space(_: &Path) -> Option<(u64, u64)> {
     None
 }
@@ -109,7 +119,7 @@ impl Deletion {
 /// Removes a file or folder tree for good, best effort: read-only folders (left by package builds, Go, …) are
 /// made writable first, and a failing entry does not stop the rest of the tree from being freed.
 /// The OS trash folder itself is emptied but kept, since the OS expects it to exist.
-fn remove(path: &Path) -> io::Result<()> {
+pub(crate) fn remove(path: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if !meta.is_dir() {
         return fs::remove_file(path).or_else(|e| {
@@ -132,7 +142,8 @@ fn remove(path: &Path) -> io::Result<()> {
         return Err(e);
     }
     if scan::trash_dir().as_deref() == Some(path) {
-        if !cfg!(target_os = "macos") {
+        // Windows recreates the Recycle Bin folder itself; only Linux expects a layout inside it.
+        if cfg!(all(unix, not(target_os = "macos"))) {
             // freedesktop trash layout
             fs::create_dir_all(path.join("files"))?;
             fs::create_dir_all(path.join("info"))?;
@@ -201,11 +212,23 @@ pub fn scan_default(
     let places = scan::Places::system();
     let mut roots = vec![root];
     roots.extend(places.downloads.as_deref());
+    // The trash sits inside the home folder except on Windows, where it needs a root of its own.
+    #[cfg(windows)]
+    roots.extend(places.trash.as_deref());
     scan::scan(&roots, &places, progress, &mut on_partial)
 }
 
 #[cfg(test)]
 mod tests {
+    /// The speed test refuses to run without free space, so a platform returning None here would
+    /// skip that guard and write until the disk is full.
+    #[test]
+    fn reports_disk_space() {
+        let (total, free) = super::disk_space(&std::env::temp_dir()).expect("the temp folder is on a disk");
+        assert!(total > 0 && free <= total, "{free} free of {total}");
+        assert!(super::disk_space(std::path::Path::new("deskmonk-no-such-folder")).is_none());
+    }
+
     #[test]
     fn select_all_keeps_one_copy_per_group() {
         use super::scan::{Category, Item};

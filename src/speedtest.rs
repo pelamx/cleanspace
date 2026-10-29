@@ -14,6 +14,10 @@ pub struct Speed {
 
 const BLOCK: usize = 8 << 20;
 
+/// Unbuffered Windows reads need the buffer, the offset and the length aligned to the volume's
+/// sector size. 4 KiB covers every sector size in use.
+const ALIGN: usize = 4096;
+
 /// Removes the test file however the test ends.
 struct TempFile(PathBuf);
 
@@ -25,9 +29,9 @@ impl Drop for TempFile {
 
 /// Writes then reads `size` bytes in `dir`. `progress` counts bytes done, up to 2 × `size`.
 /// Refuses to run when the disk does not have plenty of free space: users of a cleaner are often nearly full.
+/// On Windows the read pass skips the last partial 4 KiB sector, so `size` should be a round number.
 /// Slow (seconds on an HDD): call it off the UI thread.
 pub fn run(dir: &Path, size: u64, progress: &AtomicU64) -> io::Result<Speed> {
-    // shortcut: no free-space check on Windows (see disk_space); a full disk fails the write and the file is still removed.
     if let Some((_, free)) = crate::disk_space(dir)
         && free < size.saturating_mul(3)
     {
@@ -64,13 +68,17 @@ pub fn run(dir: &Path, size: u64, progress: &AtomicU64) -> io::Result<Speed> {
     drop_cache(&out);
     drop(out);
 
-    let mut input = File::open(&file.0)?;
+    let mut input = open_read(&file.0)?;
     no_cache(&input);
-    let mut buf = vec![0; BLOCK];
+    // Align into a slightly larger buffer rather than allocate by hand; see ALIGN.
+    let mut raw = vec![0; BLOCK + ALIGN];
+    let offset = raw.as_ptr().align_offset(ALIGN);
+    let buf = &mut raw[offset..offset + BLOCK];
     let start = Instant::now();
     let mut done = 0;
-    loop {
-        let n = input.read(&mut buf)?;
+    let readable = if cfg!(windows) { size & !(ALIGN as u64 - 1) } else { size };
+    while done < readable {
+        let n = input.read(&mut buf[..BLOCK.min((readable - done) as usize)])?;
         if n == 0 {
             break;
         }
@@ -78,7 +86,28 @@ pub fn run(dir: &Path, size: u64, progress: &AtomicU64) -> io::Result<Speed> {
         progress.store(size + done, Ordering::Relaxed);
     }
     let read = done as f64 / start.elapsed().as_secs_f64();
+    // The skipped tail must not leave the progress bar short of the end.
+    progress.store(2 * size, Ordering::Relaxed);
     Ok(Speed { write, read })
+}
+
+/// Windows: read past the cache, so the read pass measures the disk and not RAM. Falls back to a
+/// normal open on the filesystems that refuse unbuffered handles.
+#[cfg(windows)]
+fn open_read(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_NO_BUFFERING: u32 = 0x2000_0000;
+    const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN)
+        .open(path)
+        .or_else(|_| File::open(path))
+}
+
+#[cfg(not(windows))]
+fn open_read(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 /// macOS: bypass the page cache, so reads come from the disk and not from RAM.
@@ -98,8 +127,7 @@ fn drop_cache(file: &File) {
     unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
 }
 
-// shortcut: on Windows the read pass may be served from the cache (looks too fast); open with
-// FILE_FLAG_NO_BUFFERING and sector-aligned buffers if Windows numbers matter.
+/// Windows needs nothing here: the read handle itself bypasses the cache, see [`open_read`].
 #[cfg(not(target_os = "linux"))]
 fn drop_cache(_: &File) {}
 

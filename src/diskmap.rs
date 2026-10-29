@@ -30,6 +30,9 @@ fn device(meta: &fs::Metadata) -> Option<u64> {
     Some(meta.dev())
 }
 
+/// Windows needs no device id: it mounts other volumes as junctions and mount points, which carry
+/// the reparse tags std reports as symlinks, so the `is_dir` check above has already skipped them.
+/// Testing the reparse attribute instead would also skip cloud-backed folders (OneDrive on demand).
 #[cfg(not(unix))]
 fn device(_: &fs::Metadata) -> Option<u64> {
     None

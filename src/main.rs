@@ -69,7 +69,7 @@ fn main() -> eframe::Result {
             setup_style(&cc.egui_ctx);
             let mut app = App::default();
             app.detect_hardware(cc.egui_ctx.clone());
-            if cfg!(target_os = "macos") {
+            if cfg!(any(target_os = "macos", windows)) {
                 let (tx, rx) = channel();
                 let ctx = cc.egui_ctx.clone();
                 app.watcher = Some(applock::Watcher::start(app.lock.apps.clone(), move |blocked| {
@@ -1528,7 +1528,7 @@ impl App {
                     ui.label(RichText::new(tf!("Kilitli uygulamalar ({})", "Locked apps ({})", "Apps bloqueadas ({})", self.lock.apps.len())).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(t("+ Başka konumdan ekle…", "+ Add from elsewhere…", "+ Añadir desde otra ubicación…")).clicked()
-                            && let Some(app) = rfd::FileDialog::new().set_directory("/Applications").add_filter(t("Uygulama", "App", "App"), &["app"]).pick_file()
+                            && let Some(app) = rfd::FileDialog::new().set_directory(app_folder()).add_filter(t("Uygulama", "App", "App"), &[app_extension()]).pick_file()
                         {
                             if !applock::can_lock(&app) {
                                 self.lock_error = tf!(
@@ -2179,6 +2179,19 @@ impl Icons {
     }
 }
 
+/// Where the "add from elsewhere" picker opens, and what it accepts: bundles on macOS, .exe on Windows.
+fn app_folder() -> PathBuf {
+    if cfg!(windows) {
+        std::env::var_os("ProgramFiles").map_or_else(|| PathBuf::from(r"C:\Program Files"), PathBuf::from)
+    } else {
+        PathBuf::from("/Applications")
+    }
+}
+
+fn app_extension() -> &'static str {
+    if cfg!(windows) { "exe" } else { "app" }
+}
+
 /// The app's Finder icon, `px` pixels square.
 #[cfg(target_os = "macos")]
 fn app_icon(app: &Path, px: usize) -> Option<egui::ColorImage> {
@@ -2352,7 +2365,10 @@ fn notify(title: &str, body: &str) {
         .spawn();
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("notify-send").args([title, body]).spawn();
-    // shortcut: no Windows toast (needs the WinRT API); the Dock/taskbar attention request still fires.
+    // shortcut: no Windows toast. A toast is addressed to an AppUserModelID, which only an installed
+    // Start Menu shortcut carries, and deskMonk ships as a portable zip; borrowing PowerShell's id
+    // instead is silently dropped on machines where its notifications are off (measured). The taskbar
+    // attention request above does fire. Revisit once there is a Windows installer.
     let _ = (title, body);
 }
 

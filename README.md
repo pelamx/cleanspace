@@ -14,7 +14,8 @@ Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windo
 - **Kopyalar**: aynı boyut, aynı ilk 64 KB ve aynı SHA-256 içerik (32 KB üstü dosyalar). Her grubun ilk kopyası korunur.
   Fazla kopyalar sadece kullanıcı klasörlerinde (İndirilenler, Belgeler, Masaüstü, Resimler, Müzik, Videolar) otomatik seçilir.
   Gizli klasörler ve git repoları kopya aramasına girmez, çünkü bunlar uygulama ya da proje dosyalarıdır.
-- **Gereksiz**: uygulama önbellekleri (`~/.cache`, `~/Library/Caches`, Windows'ta `%TEMP%`), çöp kutusu, npm önbelleği.
+- **Gereksiz**: uygulama önbellekleri (`~/.cache`, `~/Library/Caches`, Windows'ta `%TEMP%`), çöp kutusu (Windows'ta
+  Geri Dönüşüm Kutusu), npm önbelleği.
   Her biri uygulama başına tek satır olarak listelenir. Ayrıca `.tmp .temp .bak .old .log .crdownload .part .dmp`, `*~`,
   `.DS_Store`, `Thumbs.db` ve `desktop.ini` dosyaları da bu kategoriye girer.
 - **Eski indirmeler**: İndirilenler klasöründe 90 günden eski dosyalar.
@@ -65,10 +66,12 @@ ekran, disk, pil) ve doluluk/pil sağlığı/çalışma süresi gibi kullanım b
 sağ tık klasörde gösterir, üstteki yol ile geri çıkılır.
 Donanım ekranındaki **Disk hız testi** sistem diskine 1 GB'lık geçici dosya yazıp geri okur ve MB/s gösterir; dosya her
 durumda silinir, yeterli boş alan (3 GB) yoksa test çalışmaz.
-**Sistem → Uygulama kilidi** (macOS): şifre belirlenip uygulamalar seçilir; kilitli bir uygulama açılınca deskMonk onu
-durdurur ve şifre sorar, doğru şifreyle açar, uygulama kapatılınca yeniden kilitler. Zaten açık olan uygulamalar (kaydedilmemiş
-iş olabilir) kapatılana kadar durdurulmaz. deskMonk açıkken çalışır (pencereyi kapatmak sorun değil); Cmd+Q ile çıkılırsa
-kilit kalkar, bu yüzden bir gizlilik kilidi olarak düşünülmeli, güvenlik duvarı olarak değil.
+**Sistem → Uygulama kilidi** (macOS ve Windows): şifre belirlenip uygulamalar seçilir; kilitli bir uygulama açılınca
+deskMonk onu durdurur ve şifre sorar, doğru şifreyle açar, uygulama kapatılınca yeniden kilitler. Zaten açık olan
+uygulamalar (kaydedilmemiş iş olabilir) kapatılana kadar durdurulmaz. macOS'ta `/Applications` altındaki `.app`
+paketleri, Windows'ta Program Files ve `%LOCALAPPDATA%\Programs` altındaki uygulamalar listelenir (her klasörden tek
+`.exe`; `%SystemRoot%` altındakiler kilitlenemez). deskMonk açıkken çalışır (pencereyi kapatmak sorun değil); uygulamadan
+çıkılırsa kilit kalkar, bu yüzden bir gizlilik kilidi olarak düşünülmeli, güvenlik duvarı olarak değil.
 
 ## TUI
 

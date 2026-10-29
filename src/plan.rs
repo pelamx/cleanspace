@@ -193,8 +193,23 @@ fn utc_offset(secs: u64) -> i64 {
     if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() { 0 } else { tm.tm_gmtoff as i64 }
 }
 
-// shortcut: Windows counts days in UTC; GetTimeZoneInformation would make it local.
-#[cfg(not(unix))]
+/// shortcut: the offset is the one in force now, not at `secs`, so a date from the other side of a
+/// daylight-saving switch can be an hour out. Days and quotas are counted today, so it does not show.
+#[cfg(windows)]
+fn utc_offset(_: u64) -> i64 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    let mut tz: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    let bias = match unsafe { GetTimeZoneInformation(&mut tz) } {
+        1 => tz.Bias + tz.StandardBias, // TIME_ZONE_ID_STANDARD
+        2 => tz.Bias + tz.DaylightBias, // TIME_ZONE_ID_DAYLIGHT
+        0 => tz.Bias,                   // TIME_ZONE_ID_UNKNOWN: no switch dates, so no extra bias
+        _ => return 0,                  // TIME_ZONE_ID_INVALID
+    };
+    // Windows counts minutes *behind* UTC, the opposite sign of tm_gmtoff.
+    -(bias as i64) * 60
+}
+
+#[cfg(not(any(unix, windows)))]
 fn utc_offset(_: u64) -> i64 {
     0
 }
