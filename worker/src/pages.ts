@@ -140,7 +140,7 @@ export function buyPage(req: Request, lang: Lang, o: BuyOptions): Response {
   const body = `<h1>${s.proTitle}</h1>${tiers}
   <section class="paycard" aria-label="${esc(s.proTitle)}">
     <header class="paycard-top">${LOCK}<span>${s.secure}</span></header>
-    <div class="plans">${card("monthly", money(lang, USD.monthly), s.monthlyNote)}${card("yearly", money(lang, USD.yearly), s.yearlyNote)}</div>
+    <div class="plans">${card("monthly", money(lang, USD.monthly), s.monthlyNote)}${card("yearly", money(lang, USD.yearly), s.monthlyNote)}</div>
     ${o.install ? `<p class="ok" style="font-size:13px">${s.fromApp}</p>` : ""}
     <label class="field" for="email">${s.email}</label>
     <input id="email" type="email" required autocomplete="email" placeholder="${esc(s.emailPh)}">

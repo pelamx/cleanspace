@@ -1,5 +1,5 @@
 //! Languages of deskmonk.app and the buyer pages. Texts are in ../i18n/<code>.json, the same keys as en.json;
-//! a missing key falls back to English. Prices are not in the texts: {monthly}, {yearly}, {permonth} and {save}
+//! a missing key falls back to English. Prices are not in the texts: {monthly} and {yearly}
 //! are filled in from USD, formatted the way the language writes money.
 
 import ar from "../i18n/ar.json";
@@ -136,12 +136,9 @@ export function money(lang: Lang, usd: number): string {
 export function word(lang: Lang, key: string): string {
   const text = DICTS[lang]?.[key] ?? (en as Dict)[key] ?? "";
   if (!text.includes("{")) return text;
-  const save = 1 - USD.yearly / (USD.monthly * 12);
   return text
     .replaceAll("{monthly}", money(lang, USD.monthly))
-    .replaceAll("{yearly}", money(lang, USD.yearly))
-    .replaceAll("{permonth}", money(lang, Math.round((USD.yearly / 12) * 100) / 100))
-    .replaceAll("{save}", new Intl.NumberFormat(lang, { style: "percent" }).format(Math.round(save * 100) / 100));
+    .replaceAll("{yearly}", money(lang, USD.yearly));
 }
 
 /** Every key with this prefix, prefix removed, in `lang`. */

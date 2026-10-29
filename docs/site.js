@@ -17,8 +17,8 @@ const price = document.getElementById("pro-price");
 if (price) {
   const words = document.getElementById("cycle-words");
   const text = {
-    yearly: { amount: price.firstElementChild.textContent, per: price.querySelector("small").textContent, note: document.getElementById("pro-sub").innerHTML },
-    monthly: { amount: words.children[0].textContent, per: words.children[1].textContent, note: words.children[2].innerHTML },
+    monthly: { amount: price.firstElementChild.textContent, per: price.querySelector("small").textContent, note: document.getElementById("pro-sub").innerHTML },
+    yearly: { amount: words.children[0].textContent, per: words.children[1].textContent, note: words.children[2].innerHTML },
   };
   const buy = document.getElementById("pro-buy");
   const lang = new URL(buy.href).searchParams.get("lang");

@@ -173,10 +173,10 @@
     <span class="eyebrow" data-i18n="price.eyebrow">Pricing</span>
     <h2 class="big" data-i18n="price.title">Free every day. Pro when you want no limits.</h2>
     <p class="lead" data-i18n="price.lead">Every feature is in the free plan. Pro removes the daily limits, on up to 3 of your computers.</p>
-    <span id="cycle-words" hidden><span data-price="monthly">$2.50</span><span data-i18n="price.permonth">/ month</span><span data-i18n="price.monthnote">Cancel anytime</span></span>
+    <span id="cycle-words" hidden><span data-price="yearly">$25</span><span data-i18n="price.peryear">/ year</span><span data-i18n="price.monthnote">Cancel anytime</span></span>
     <div class="cycle" role="group">
-      <button type="button" data-cycle="monthly" data-i18n="price.monthly">Monthly</button>
-      <button type="button" data-cycle="yearly" class="on"><span data-i18n="price.yearly">Yearly</span> <b data-i18n="price.save">−17%</b></button>
+      <button type="button" data-cycle="monthly" class="on" data-i18n="price.monthly">Monthly</button>
+      <button type="button" data-cycle="yearly"><span data-i18n="price.yearly">Yearly</span></button>
     </div>
     <div class="plans">
       <div class="plan">
@@ -195,8 +195,8 @@
       </div>
       <div class="plan pro">
         <div class="name">deskMonk Pro</div>
-        <div class="price" id="pro-price"><span data-price="yearly">$25</span> <small data-i18n="price.peryear">/ year</small></div>
-        <div class="sub" id="pro-sub" data-i18n="price.yearnote">$2.08 a month, billed yearly</div>
+        <div class="price" id="pro-price"><span data-price="monthly">$2.50</span> <small data-i18n="price.permonth">/ month</small></div>
+        <div class="sub" id="pro-sub" data-i18n="price.monthnote">Cancel anytime</div>
         <ul>
           <li data-i18n="price.p1">Everything in Free</li>
           <li data-i18n="price.p2"><b>Unlimited</b> cleaning</li>
@@ -205,7 +205,7 @@
           <li data-i18n="price.p5">One license for <b>up to 3 computers</b></li>
           <li data-i18n="price.p6">Cancel anytime · 14-day refund</li>
         </ul>
-        <div class="btns"><a class="btn primary" id="pro-buy" href="/buy?plan=yearly" data-i18n="price.buy">Get Pro</a></div>
+        <div class="btns"><a class="btn primary" id="pro-buy" href="/buy?plan=monthly" data-i18n="price.buy">Get Pro</a></div>
       </div>
     </div>
     <p class="note" style="margin-top:16px" data-i18n="price.note">Prices in USD; Paddle shows your local currency and any tax before you pay.</p>

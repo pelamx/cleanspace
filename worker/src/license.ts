@@ -219,7 +219,7 @@ function buy(req: Request, env: LicenseEnv): Response {
   const country = (req as { cf?: { country?: unknown } }).cf?.country;
   return buyPage(req, pickLang(req), {
     configured: !!(env.PADDLE_CLIENT_TOKEN && env.PADDLE_PRICE_MONTHLY && env.PADDLE_PRICE_YEARLY),
-    plan: url.searchParams.get("plan") === "monthly" ? "monthly" : "yearly",
+    plan: url.searchParams.get("plan") === "yearly" ? "yearly" : "monthly",
     install,
     token: env.PADDLE_CLIENT_TOKEN ?? "",
     sandbox: env.PADDLE_ENV !== "production",

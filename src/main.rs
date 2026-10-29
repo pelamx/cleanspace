@@ -1238,8 +1238,8 @@ impl App {
                             }
                         }
                         col.vertical_centered(|ui| {
-                            let note = if yearly { t("%17 tasarruf", "save 17%", "ahorre 17 %") } else { t("istediğiniz zaman iptal", "cancel anytime", "cancele cuando quiera") };
-                            ui.label(RichText::new(note).small().color(if yearly { Color32::from_rgb(245, 184, 46) } else { muted }));
+                            let note = t("istediğiniz zaman iptal", "cancel anytime", "cancele cuando quiera");
+                            ui.label(RichText::new(note).small().color(muted));
                         });
                     }
                 });

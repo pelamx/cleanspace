@@ -110,10 +110,8 @@ test("language: chosen, then country, then browser; prices filled in", () => {
   expect(pickLang(at("https://deskmonk.app/", "XX", { "Accept-Language": "zh-Hant-TW" }))).toBe("zh-TW");
   expect(pickLang(at("https://deskmonk.app/", null))).toBe("en");
 
-  expect(word("en", "price.yearnote")).toBe("$2.08 a month, billed yearly");
-  expect(word("en", "price.save")).toBe("−17%");
+
   expect(word("en", "meta.pdesc")).toContain("$2.50 a month or $25 a year");
-  expect(word("tr", "price.save")).toBe("−%17");
   expect(money("de", USD.monthly)).toMatch(/2,50\s\$/);
   // Every language has every key, so no page shows English by accident.
   for (const lang of LANGS) expect(word(lang, "hero.title"), lang).not.toBe("");
