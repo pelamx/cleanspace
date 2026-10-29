@@ -21,7 +21,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
             .with_min_inner_size([760.0, 480.0])
-            .with_title("CleanSpace"),
+            .with_title("cleanSpace by pelamx"),
         ..Default::default()
     };
     eframe::run_native(
@@ -226,7 +226,11 @@ impl App {
             ui.label(RichText::new("✨").size(26.0).color(ACCENT));
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("CleanSpace").size(19.0).strong());
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    ui.label(RichText::new("cleanSpace").size(19.0).strong());
+                    ui.label(RichText::new("by pelamx").size(12.0).color(ACCENT));
+                });
                 ui.label(
                     RichText::new("Akıllı depolama temizleyici")
                         .small()
@@ -582,7 +586,7 @@ impl eframe::App for App {
                 ui.set_width(420.0);
                 ui.label(RichText::new("📊  Anonim kullanım istatistikleri").size(19.0).strong());
                 ui.add_space(4.0);
-                ui.label("CleanSpace'i geliştirmek için tarama ve temizleme sayıları (dosya sayısı, boyut, işletim sistemi) gönderilsin mi?");
+                ui.label("cleanSpace'i geliştirmek için tarama ve temizleme sayıları (dosya sayısı, boyut, işletim sistemi) gönderilsin mi?");
                 ui.label(RichText::new("Dosya adları ve yolları asla gönderilmez.").strong());
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

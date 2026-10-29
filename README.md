@@ -1,4 +1,4 @@
-# CleanSpace — Akıllı depolama temizleyici
+# cleanSpace by pelamx — Akıllı depolama temizleyici
 
 Bilgisayardaki gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur.
 Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windows.

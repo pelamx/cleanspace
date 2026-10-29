@@ -304,7 +304,7 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
         .as_secs() as i64;
     let (week, month) = (now - 7 * DAY, now - 30 * DAY);
     let mut body = String::from(
-        "<h1>CleanSpace Admin</h1><div class=muted>Anonim kullanım istatistikleri</div>",
+        "<h1>cleanSpace by pelamx — Admin</h1><div class=muted>Anonim kullanım istatistikleri</div>",
     );
     body += &cards(
         db,
@@ -384,7 +384,7 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
         &["Kurulum ID", "OS", "Arayüz", "Sürüm", "İlk görülme (UTC)", "Son görülme (UTC)", "Tarama", "Temizleme", "Kazanılan (boyut)"],
         true,
     )?;
-    Ok(layout("CleanSpace Admin", &body))
+    Ok(layout("cleanSpace by pelamx — Admin", &body))
 }
 
 fn user_page(db: &Connection, id: &str) -> rusqlite::Result<String> {

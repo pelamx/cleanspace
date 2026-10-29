@@ -201,7 +201,11 @@ impl App {
             None => String::new(),
         };
         f.render_widget(
-            Paragraph::new(format!("CleanSpace  {}{scanning}", self.root.display())).bold(),
+            Paragraph::new(format!(
+                "cleanSpace by pelamx  {}{scanning}",
+                self.root.display()
+            ))
+            .bold(),
             header,
         );
 
