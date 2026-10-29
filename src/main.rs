@@ -235,16 +235,19 @@ impl App {
     }
 
     fn poll_deletion(&mut self) {
-        let Some((failed, freed)) = self.deleting.as_ref().and_then(|d| d.poll()) else {
+        let Some(done) = self.deleting.as_ref().and_then(|d| d.poll()) else {
             return;
         };
-        let ok = self.deleting.take().unwrap().total - failed.len();
-        self.telemetry.clean_done("gui", ok, freed);
-        self.status = format!("✔ {ok} öğe temizlendi, {} yer açıldı", human_size(freed));
-        if !failed.is_empty() {
-            self.status += &format!(" · {} öğe silinemedi (hâlâ seçili)", failed.len());
+        let ok = self.deleting.take().unwrap().total - done.failed.len();
+        self.telemetry.clean_done("gui", ok, done.freed);
+        self.status = format!(
+            "✔ {ok} öğe temizlendi, {} yer açıldı",
+            human_size(done.freed)
+        );
+        if let Some(err) = done.first_error {
+            self.status += &format!(" · {} öğe tamamen silinemedi: {err}", done.failed.len());
         }
-        self.items.extend(failed);
+        self.items.extend(done.failed);
     }
 
     fn totals(&self, cat: Option<Category>, only_selected: bool) -> (usize, u64) {
@@ -556,7 +559,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.label(RichText::new(format!("{n} dosya seçildi")).strong());
                     let status = if self.status.is_empty() {
-                        "Dosyalar çöp kutusuna taşınır, istediğinizde geri alabilirsiniz."
+                        "Gereksiz dosyalar kalıcı silinir, diğerleri çöp kutusuna taşınır."
                     } else {
                         &self.status
                     };
@@ -665,7 +668,14 @@ impl eframe::App for App {
                 ui.set_width(380.0);
                 ui.label(RichText::new("🗑  Dosyalar temizlensin mi?").size(19.0).strong());
                 ui.add_space(4.0);
-                ui.label(format!("{n} dosya ({}) çöp kutusuna taşınacak. İsterseniz çöp kutusundan geri alabilirsiniz.", human_size(size)));
+                let (perm_n, perm_size) = self.items.iter().filter(|i| i.selected && cleanspace::is_permanent(i, false)).fold((0, 0), |(c, s), i| (c + 1, s + i.size));
+                ui.label(format!("{n} öğe, toplam {}.", human_size(size)));
+                if perm_n > 0 {
+                    ui.label(RichText::new(format!("• {perm_n} gereksiz öğe ({}) kalıcı olarak silinecek. Önbellekler gerektiğinde yeniden oluşur.", human_size(perm_size))).color(DANGER));
+                }
+                if n > perm_n {
+                    ui.label(format!("• {} dosya ({}) çöp kutusuna taşınacak, geri alınabilir.", n - perm_n, human_size(size - perm_size)));
+                }
                 ui.add_space(12.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let go = egui::Button::new(RichText::new("Temizle").strong().color(Color32::WHITE)).fill(DANGER);

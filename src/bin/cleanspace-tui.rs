@@ -116,14 +116,14 @@ impl App {
                 }
                 self.items = items;
             }
-            if let Some((failed, freed)) = self.deleting.as_ref().and_then(|d| d.poll()) {
-                let ok = self.deleting.take().unwrap().total - failed.len();
-                self.telemetry.clean_done("tui", ok, freed);
-                self.status = format!("{ok} öğe temizlendi ({})", human_size(freed));
-                if !failed.is_empty() {
-                    self.status += &format!(", {} başarısız (hâlâ seçili)", failed.len());
+            if let Some(done) = self.deleting.as_ref().and_then(|d| d.poll()) {
+                let ok = self.deleting.take().unwrap().total - done.failed.len();
+                self.telemetry.clean_done("tui", ok, done.freed);
+                self.status = format!("{ok} öğe temizlendi ({})", human_size(done.freed));
+                if let Some(err) = done.first_error {
+                    self.status += &format!(", {} tamamen silinemedi: {err}", done.failed.len());
                 }
-                self.items.extend(failed);
+                self.items.extend(done.failed);
             }
             terminal.draw(|f| self.draw(f))?;
             if !event::poll(Duration::from_millis(100))? {
@@ -304,12 +304,12 @@ impl App {
         } else {
             ""
         };
-        f.render_widget(Paragraph::new(format!("↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d çöpe taşı  D kalıcı sil  r yeniden tara{tkey}  q çık")).dim(), help);
+        f.render_widget(Paragraph::new(format!("↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d temizle  D hepsini kalıcı sil  r yeniden tara{tkey}  q çık")).dim(), help);
 
         let text = match self.prompt {
             Prompt::None => return,
             Prompt::Consent => "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) gönderilsin mi?\nDosya adları ve yolları asla gönderilmez.  [e]vet / [h]ayır".to_string(),
-            Prompt::Trash => format!("{n} dosya ({}) çöp kutusuna taşınacak. Emin misiniz? [e/h]", human_size(size)),
+            Prompt::Trash => format!("{n} öğe ({}) temizlenecek: gereksiz dosyalar kalıcı silinir, diğerleri çöp kutusuna taşınır. Emin misiniz? [e/h]", human_size(size)),
             Prompt::Delete => format!("{n} dosya ({}) KALICI olarak silinecek, geri alınamaz! Emin misiniz? [e/h]", human_size(size)),
         };
         let area = centered(f.area(), 70, 5);

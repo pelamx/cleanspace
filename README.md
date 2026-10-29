@@ -22,8 +22,9 @@ Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windo
 
 Her dosya tek bir kategoride listelenir, yani boyutlar iki kez sayılmaz. Sembolik linkler takip edilmez.
 `.git` ve `node_modules` klasörlerine hiç girilmez. Silme işlemi arka planda çalışır ve arayüz donmaz.
-Masaüstü uygulaması dosyaları çöp kutusuna taşır (çöp kutusundakiler kalıcı silinir). TUI'de `d` ile çöpe taşınır,
-`D` ile kalıcı olarak silinir (sunucularda çöp kutusu yer açmaz).
+**Gereksiz** kategorisi (önbellekler, çöp kutusu, geçici dosyalar) kalıcı silinir, çünkü çöpe taşımak yer açmaz.
+Kopyalar, eski indirmeler ve büyük dosyalar geri alınabilsin diye çöp kutusuna taşınır. Salt okunur klasörler de silinir.
+TUI'de `d` aynı kuralla temizler, `D` her şeyi kalıcı siler (sunucularda çöp kutusu yer açmaz).
 
 ## Derleme
 
@@ -46,7 +47,7 @@ Satıra tıklamak seçer, 📂 ise dosyayı klasöründe gösterir. Açık/koyu 
 ```sh
 cleanspace-tui [KLASÖR]   # varsayılan: ev dizini
 ```
-`↑↓` gezin · `boşluk` seç · `a/n` tümü/hiçbiri · `←→` kategori · `d` çöpe taşı · `D` kalıcı sil · `r` yeniden tara · `t` istatistik aç/kapa · `q` çık
+`↑↓` gezin · `boşluk` seç · `a/n` tümü/hiçbiri · `←→` kategori · `d` temizle · `D` hepsini kalıcı sil · `r` yeniden tara · `t` istatistik aç/kapa · `q` çık
 
 ## Kullanım istatistikleri ve admin paneli
 
