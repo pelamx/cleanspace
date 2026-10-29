@@ -16,7 +16,7 @@ Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windo
 - **Eski indirmeler**: İndirilenler klasöründe 90 günden eski dosyalar.
 - **Büyük dosyalar**: 500 MB ve üzeri.
 
-Her dosya tek bir kategoride listelenir, yani boyutlar iki kez sayılmaz. Sembolik linkler takip edilmez.
+Her dosya tek bir kategoride listelenir, yani boyutlar iki kez sayılmaz. Sembolik linkler takip edilmez. `~/Library`, gizli klasörler (`.git`, `.cargo`, `.npm`…), `node_modules` ve `target` taranmaz.
 Masaüstü uygulaması dosyaları çöp kutusuna taşır. TUI'de `d` ile çöpe taşınır, `D` ile kalıcı olarak silinir
 (sunucularda çöp kutusu yer açmaz).
 

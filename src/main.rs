@@ -1,6 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")] // no console window on Windows
 
-use cleanspace::scan::{Category, Item, human_size};
+use cleanspace::scan::{Category, Item, Progress, human_size};
 use cleanspace::telemetry::{self, Telemetry};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, RichText, Sense, Stroke,
@@ -9,7 +9,7 @@ use eframe::egui::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 const ACCENT: Color32 = Color32::from_rgb(79, 110, 247);
@@ -21,7 +21,11 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
             .with_min_inner_size([760.0, 480.0])
-            .with_title("CleanSpace"),
+            .with_title("CleanSpace by pelamx")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+                    .expect("embedded icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     eframe::run_native(
@@ -146,15 +150,21 @@ fn description(cat: Category) -> &'static str {
 }
 
 enum Row {
+    /// Index of the group's first item.
     Group(usize),
     Item(usize),
 }
+
+/// Items handed back by the cleaning thread, with (done, failed, freed bytes).
+type CleanResult = (Vec<Item>, (usize, usize, u64));
 
 struct App {
     root: String,
     items: Vec<Item>,
     tab: Category,
-    scanning: Option<(Receiver<Vec<Item>>, Arc<AtomicUsize>)>,
+    scanning: Option<(Receiver<Vec<Item>>, Arc<Progress>)>,
+    /// Items are handed to the cleaning thread and come back with (done, failed, freed); also holds (handled, total) counts.
+    cleaning: Option<(Receiver<CleanResult>, Arc<AtomicUsize>, usize)>,
     scanned_files: usize,
     has_scanned: bool,
     confirm: bool,
@@ -170,6 +180,7 @@ impl Default for App {
             items: Vec::new(),
             tab: Category::Duplicate,
             scanning: None,
+            cleaning: None,
             scanned_files: 0,
             has_scanned: false,
             confirm: false,
@@ -187,7 +198,7 @@ impl App {
             self.status = format!("Klasör bulunamadı: {}", root.display());
             return;
         }
-        let progress = Arc::new(AtomicUsize::new(0));
+        let progress = Arc::new(Progress::default());
         let (tx, rx) = channel();
         let counter = progress.clone();
         std::thread::spawn(move || {
@@ -199,16 +210,19 @@ impl App {
         self.scanning = Some((rx, progress));
     }
 
-    fn delete_selected(&mut self) {
-        let (ok, failed, freed) = cleanspace::delete_selected(&mut self.items, false);
-        self.telemetry.clean_done("gui", ok, freed);
-        self.status = format!(
-            "✔ {ok} dosya çöp kutusuna taşındı, {} yer açıldı",
-            human_size(freed)
-        );
-        if failed > 0 {
-            self.status += &format!(" · {failed} dosya taşınamadı");
-        }
+    fn delete_selected(&mut self, ctx: egui::Context) {
+        let mut items = std::mem::take(&mut self.items);
+        let total = items.iter().filter(|i| i.selected).count();
+        let progress = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = channel();
+        let counter = progress.clone();
+        std::thread::spawn(move || {
+            let result = cleanspace::delete_selected(&mut items, false, &counter);
+            let _ = tx.send((items, result));
+            ctx.request_repaint();
+        });
+        self.status.clear();
+        self.cleaning = Some((rx, progress, total));
     }
 
     fn totals(&self, cat: Option<Category>, only_selected: bool) -> (usize, u64) {
@@ -226,7 +240,10 @@ impl App {
             ui.label(RichText::new("✨").size(26.0).color(ACCENT));
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("CleanSpace").size(19.0).strong());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("CleanSpace").size(19.0).strong());
+                    ui.label(RichText::new("by pelamx").small().color(muted));
+                });
                 ui.label(
                     RichText::new("Akıllı depolama temizleyici")
                         .small()
@@ -264,6 +281,7 @@ impl App {
 
     fn header(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let scanning = self.scanning.is_some();
+        let busy = scanning || self.cleaning.is_some();
         card(ui, |ui| {
             let edit = egui::TextEdit::singleline(&mut self.root)
                 .hint_text("Taranacak klasör")
@@ -280,7 +298,7 @@ impl App {
                         egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
                             .fill(ACCENT)
                             .min_size(vec2(110.0, 32.0));
-                    if ui.add_enabled(!scanning, scan).clicked() {
+                    if ui.add_enabled(!busy, scan).clicked() {
                         self.start_scan(ctx.clone());
                     }
                     if ui
@@ -328,7 +346,7 @@ impl App {
         let (found_n, found) = self.totals(None, false);
         let (sel_n, sel) = self.totals(None, true);
         let scanned = match &self.scanning {
-            Some((_, p)) => p.load(Ordering::Relaxed),
+            Some((_, p)) => p.files.load(Ordering::Relaxed),
             None => self.scanned_files,
         };
         ui.columns(3, |cols| {
@@ -362,18 +380,23 @@ impl App {
 
     fn content(&mut self, ui: &mut Ui) {
         let (_, _, _, muted) = palette(ui.visuals().dark_mode);
+        if let Some((_, done, total)) = &self.cleaning {
+            let done = done.load(Ordering::Relaxed);
+            empty_state(ui, |ui| {
+                ui.add(egui::Spinner::new().size(42.0).color(ACCENT));
+                ui.add_space(10.0);
+                ui.label(RichText::new("Temizleniyor…").size(20.0).strong());
+                ui.label(RichText::new(format!("{done} / {total} dosya işlendi")).color(muted));
+            });
+            return;
+        }
         if let Some((_, progress)) = &self.scanning {
-            let n = progress.load(Ordering::Relaxed);
+            let detail = scan_detail(progress);
             empty_state(ui, |ui| {
                 ui.add(egui::Spinner::new().size(42.0).color(ACCENT));
                 ui.add_space(10.0);
                 ui.label(RichText::new("Taranıyor…").size(20.0).strong());
-                ui.label(
-                    RichText::new(format!(
-                        "{n} dosya incelendi. Kopyalar için içerikler karşılaştırılıyor."
-                    ))
-                    .color(muted),
-                );
+                ui.label(RichText::new(detail).color(muted));
             });
             return;
         }
@@ -422,7 +445,7 @@ impl App {
             .filter(|(_, i)| i.category == tab)
         {
             if item.group > 0 && item.group != last_group {
-                rows.push(Row::Group(item.group));
+                rows.push(Row::Group(i));
                 last_group = item.group;
             }
             rows.push(Row::Item(i));
@@ -452,7 +475,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for row in &rows[range] {
                         match *row {
-                            Row::Group(g) => group_row(ui, g, &self.items),
+                            Row::Group(first) => group_row(ui, &self.items[first..]),
                             Row::Item(i) => item_row(ui, &mut self.items[i], i),
                         }
                     }
@@ -508,21 +531,49 @@ impl eframe::App for App {
             self.start_scan(ctx.clone());
         }
         if let Some((rx, progress)) = &self.scanning {
-            if let Ok(items) = rx.try_recv() {
-                self.scanned_files = progress.load(Ordering::Relaxed);
-                self.telemetry.scan_done("gui", self.scanned_files, &items);
-                self.items = items;
-                self.scanning = None;
-                self.has_scanned = true;
-                // Open the first category that has something in it.
-                if let Some(cat) = Category::ALL
-                    .into_iter()
-                    .find(|&c| self.items.iter().any(|i| i.category == c))
-                {
-                    self.tab = cat;
+            match rx.try_recv() {
+                Ok(items) => {
+                    self.scanned_files = progress.files.load(Ordering::Relaxed);
+                    self.telemetry.scan_done("gui", self.scanned_files, &items);
+                    self.items = items;
+                    self.scanning = None;
+                    self.has_scanned = true;
+                    // Open the first category that has something in it.
+                    if let Some(cat) = Category::ALL
+                        .into_iter()
+                        .find(|&c| self.items.iter().any(|i| i.category == c))
+                    {
+                        self.tab = cat;
+                    }
                 }
-            } else {
-                ctx.request_repaint_after(Duration::from_millis(100));
+                Err(TryRecvError::Disconnected) => {
+                    self.scanning = None;
+                    self.status = "Tarama beklenmedik şekilde durdu, tekrar deneyin".into();
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(100)),
+            }
+        }
+        if let Some((rx, _, _)) = &self.cleaning {
+            match rx.try_recv() {
+                Ok((items, (ok, failed, freed))) => {
+                    self.items = items;
+                    self.cleaning = None;
+                    self.telemetry.clean_done("gui", ok, freed);
+                    self.status = format!(
+                        "✔ {ok} dosya çöp kutusuna taşındı, {} yer açıldı",
+                        human_size(freed)
+                    );
+                    if failed > 0 {
+                        self.status += &format!(" · {failed} dosya taşınamadı");
+                    }
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.cleaning = None;
+                    self.status =
+                        "Temizleme beklenmedik şekilde durdu, listeyi görmek için tekrar tarayın"
+                            .into();
+                }
+                Err(TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(100)),
             }
         }
 
@@ -564,7 +615,7 @@ impl eframe::App for App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let go = egui::Button::new(RichText::new("Temizle").strong().color(Color32::WHITE)).fill(DANGER);
                     if ui.add(go).clicked() {
-                        self.delete_selected();
+                        self.delete_selected(ctx.clone());
                         self.confirm = false;
                     }
                     if ui.button("Vazgeç").clicked() {
@@ -738,9 +789,24 @@ fn tail_line(ui: &Ui, text: String, font: FontId, color: Color32, width: f32) ->
     galley
 }
 
-fn group_row(ui: &mut Ui, group: usize, items: &[Item]) {
+fn scan_detail(p: &Progress) -> String {
+    let (files, hashed, to_hash) = (
+        p.files.load(Ordering::Relaxed),
+        p.hashed.load(Ordering::Relaxed),
+        p.to_hash.load(Ordering::Relaxed),
+    );
+    if to_hash == 0 {
+        format!("{files} dosya bulundu")
+    } else {
+        format!("{files} dosya bulundu · kopyalar karşılaştırılıyor: {hashed} / {to_hash}")
+    }
+}
+
+/// `items` starts at the group's first member; members are contiguous.
+fn group_row(ui: &mut Ui, items: &[Item]) {
     let (_, _, _, muted) = palette(ui.visuals().dark_mode);
-    let members: Vec<&Item> = items.iter().filter(|i| i.group == group).collect();
+    let group = items[0].group;
+    let members: Vec<&Item> = items.iter().take_while(|i| i.group == group).collect();
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let each = members[0].size;
     let text = format!(

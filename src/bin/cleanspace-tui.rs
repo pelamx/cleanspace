@@ -1,6 +1,6 @@
 //! Terminal UI for servers / cloud machines: `cleanspace-tui [FOLDER]` (default: home).
 
-use cleanspace::scan::{Category, Item, human_size};
+use cleanspace::scan::{Category, Item, Progress, human_size};
 use cleanspace::telemetry::{self, Telemetry};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -10,8 +10,8 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Tabs}
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,7 +27,7 @@ struct App {
     items: Vec<Item>,
     tab: usize,
     list: ListState,
-    scanning: Option<(Receiver<Vec<Item>>, Arc<AtomicUsize>)>,
+    scanning: Option<(Receiver<Vec<Item>>, Arc<Progress>)>,
     prompt: Prompt,
     status: String,
     telemetry: Telemetry,
@@ -65,7 +65,7 @@ fn main() -> io::Result<()> {
 
 impl App {
     fn start_scan(&mut self) {
-        let progress = Arc::new(AtomicUsize::new(0));
+        let progress = Arc::new(Progress::default());
         let (tx, rx) = channel();
         let (root, counter) = (self.root.clone(), progress.clone());
         std::thread::spawn(move || tx.send(cleanspace::scan_default(&root, &counter)));
@@ -89,14 +89,25 @@ impl App {
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         loop {
-            if let Some((rx, progress)) = &self.scanning
-                && let Ok(items) = rx.try_recv()
-            {
-                self.telemetry
-                    .scan_done("tui", progress.load(Ordering::Relaxed), &items);
-                self.items = items;
-                self.scanning = None;
-                self.list.select(Some(0));
+            if let Some((rx, progress)) = &self.scanning {
+                match rx.try_recv() {
+                    Ok(items) => {
+                        self.telemetry.scan_done(
+                            "tui",
+                            progress.files.load(Ordering::Relaxed),
+                            &items,
+                        );
+                        self.items = items;
+                        self.scanning = None;
+                        self.list.select(Some(0));
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.scanning = None;
+                        self.status =
+                            "Tarama beklenmedik şekilde durdu, r ile tekrar deneyin".into();
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
             }
             terminal.draw(|f| self.draw(f))?;
             if !event::poll(Duration::from_millis(100))? {
@@ -120,8 +131,11 @@ impl App {
                 p @ (Prompt::Trash | Prompt::Delete) => {
                     if yes {
                         let permanent = p == Prompt::Delete;
-                        let (ok, failed, freed) =
-                            cleanspace::delete_selected(&mut self.items, permanent);
+                        let (ok, failed, freed) = cleanspace::delete_selected(
+                            &mut self.items,
+                            permanent,
+                            &Default::default(),
+                        );
                         self.telemetry.clean_done("tui", ok, freed);
                         self.status = format!(
                             "{ok} dosya {} ({})",
@@ -197,11 +211,22 @@ impl App {
         .areas(f.area());
 
         let scanning = match &self.scanning {
-            Some((_, p)) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
+            Some((_, p)) => match p.to_hash.load(Ordering::Relaxed) {
+                0 => format!("  — taranıyor… {} dosya", p.files.load(Ordering::Relaxed)),
+                total => format!(
+                    "  — {} dosya · kopyalar karşılaştırılıyor {}/{total}",
+                    p.files.load(Ordering::Relaxed),
+                    p.hashed.load(Ordering::Relaxed)
+                ),
+            },
             None => String::new(),
         };
         f.render_widget(
-            Paragraph::new(format!("CleanSpace  {}{scanning}", self.root.display())).bold(),
+            Paragraph::new(format!(
+                "CleanSpace by pelamx  {}{scanning}",
+                self.root.display()
+            ))
+            .bold(),
             header,
         );
 
