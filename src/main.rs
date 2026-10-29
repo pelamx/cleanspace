@@ -1,6 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")] // no console window on Windows
 
-use cleanspace::scan::{Category, Item, human_size};
+use cleanspace::scan::{Category, Item, Phase, human_size};
 use cleanspace::telemetry::{self, Telemetry};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, RichText, Sense, Stroke,
@@ -17,11 +17,16 @@ const DANGER: Color32 = Color32::from_rgb(229, 72, 77);
 const ROW_H: f32 = 46.0;
 
 fn main() -> eframe::Result {
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("bundled icon is a valid PNG");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
             .with_min_inner_size([760.0, 480.0])
-            .with_title("cleanSpace by pelamx"),
+            .with_title("cleanSpace by pelamx")
+            // Wayland compositors take the icon from the .desktop file matching this id.
+            .with_app_id("cleanspace")
+            .with_icon(Arc::new(icon.clone())),
         ..Default::default()
     };
     eframe::run_native(
@@ -30,6 +35,14 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             setup_style(&cc.egui_ctx);
             let mut app = App::default();
+            let logo = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            );
+            app.logo = Some(
+                cc.egui_ctx
+                    .load_texture("logo", logo, egui::TextureOptions::LINEAR),
+            );
             // `cleanspace FOLDER` scans that folder right away.
             if let Some(dir) = std::env::args().nth(1) {
                 app.root = dir;
@@ -154,10 +167,10 @@ struct App {
     root: String,
     items: Vec<Item>,
     tab: Category,
-    /// Messages are (final, items): first the partial list without duplicates, then the final one.
-    scanning: Option<(Receiver<(bool, Vec<Item>)>, Arc<AtomicUsize>)>,
-    /// Partial results are shown, duplicates are still being compared.
-    comparing: bool,
+    /// Messages are (phase, items): partial lists without duplicates, then the final one with phase None.
+    scanning: Option<(Receiver<(Option<Phase>, Vec<Item>)>, Arc<AtomicUsize>)>,
+    /// Phase of the partial results on screen.
+    phase: Option<Phase>,
     scanned_files: usize,
     has_scanned: bool,
     confirm: bool,
@@ -165,6 +178,7 @@ struct App {
     status: String,
     telemetry: Telemetry,
     autostart: bool,
+    logo: Option<egui::TextureHandle>,
 }
 
 impl Default for App {
@@ -174,7 +188,7 @@ impl Default for App {
             items: Vec::new(),
             tab: Category::Duplicate,
             scanning: None,
-            comparing: false,
+            phase: None,
             scanned_files: 0,
             has_scanned: false,
             confirm: false,
@@ -182,6 +196,7 @@ impl Default for App {
             status: String::new(),
             telemetry: Telemetry::load(),
             autostart: false,
+            logo: None,
         }
     }
 }
@@ -198,16 +213,16 @@ impl App {
         let counter = progress.clone();
         std::thread::spawn(move || {
             let (partial_tx, partial_ctx) = (tx.clone(), ctx.clone());
-            let items = cleanspace::scan_default(&root, &counter, move |items| {
-                let _ = partial_tx.send((false, items));
+            let items = cleanspace::scan_default(&root, &counter, move |items, phase| {
+                let _ = partial_tx.send((Some(phase), items));
                 partial_ctx.request_repaint();
             });
-            let _ = tx.send((true, items));
+            let _ = tx.send((None, items));
             ctx.request_repaint();
         });
         self.items.clear();
         self.status.clear();
-        self.comparing = false;
+        self.phase = None;
         self.scanning = Some((rx, progress));
     }
 
@@ -241,25 +256,7 @@ impl App {
 
     fn sidebar(&mut self, ui: &mut Ui) {
         let (_, _, _, muted) = palette(ui.visuals().dark_mode);
-        ui.add_space(20.0);
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            ui.label(RichText::new("✨").size(26.0).color(ACCENT));
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 5.0;
-                    ui.label(RichText::new("cleanSpace").size(19.0).strong());
-                    ui.label(RichText::new("by pelamx").size(12.0).color(ACCENT));
-                });
-                ui.label(
-                    RichText::new("Akıllı depolama temizleyici")
-                        .small()
-                        .color(muted),
-                );
-            });
-        });
-        ui.add_space(24.0);
+        ui.add_space(18.0);
         ui.label(RichText::new("   KATEGORİLER").small().color(muted));
         ui.add_space(2.0);
         for cat in Category::ALL {
@@ -389,7 +386,7 @@ impl App {
     fn content(&mut self, ui: &mut Ui) {
         let (_, _, _, muted) = palette(ui.visuals().dark_mode);
         if let Some((_, progress)) = &self.scanning
-            && !self.comparing
+            && self.phase.is_none()
         {
             let n = progress.load(Ordering::Relaxed);
             empty_state(ui, |ui| {
@@ -436,10 +433,18 @@ impl App {
             });
         });
         ui.label(RichText::new(description(tab)).color(muted));
-        if self.comparing {
+        if let Some(phase) = self.phase {
+            let text = match phase {
+                Phase::Walking => {
+                    "Taranıyor… Bulunanlar geldikçe listeye ekleniyor. Temizlik tarama bitince açılır."
+                }
+                Phase::Comparing => {
+                    "Dosyalar listelendi, kopyalar karşılaştırılıyor… Temizlik tarama bitince açılır."
+                }
+            };
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(14.0).color(ACCENT));
-                ui.label(RichText::new("Kopyalar karşılaştırılıyor… Diğer sonuçlar hazır, temizlik tarama bitince açılır.").small().color(ACCENT));
+                ui.label(RichText::new(text).small().color(ACCENT));
             });
         }
         ui.add_space(6.0);
@@ -459,11 +464,21 @@ impl App {
             }
             rows.push(Row::Item(i));
         }
-        if rows.is_empty() && self.comparing && tab == Category::Duplicate {
+        if rows.is_empty() && self.phase.is_some() {
+            let (title, text) = match (self.phase, tab) {
+                (_, Category::Duplicate) => (
+                    "Kopyalar aranıyor…",
+                    "Dosya listesi bitince aynı boyuttaki dosyaların içerikleri karşılaştırılır. Diğer kategorilere şimdiden bakabilirsiniz.",
+                ),
+                _ => (
+                    "Taranıyor…",
+                    "Bu kategoride henüz bir şey bulunmadı, tarama sürüyor.",
+                ),
+            };
             empty_state(ui, |ui| {
                 ui.add(egui::Spinner::new().size(36.0).color(ACCENT));
-                ui.label(RichText::new("Kopyalar aranıyor…").size(17.0).strong());
-                ui.label(RichText::new("Aynı boyuttaki dosyaların içerikleri karşılaştırılıyor. Diğer kategorilere şimdiden bakabilirsiniz.").color(muted));
+                ui.label(RichText::new(title).size(17.0).strong());
+                ui.label(RichText::new(text).color(muted));
             });
             return;
         }
@@ -564,14 +579,14 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         while let Some((rx, progress)) = &self.scanning
-            && let Ok((done, mut items)) = rx.try_recv()
+            && let Ok((phase, mut items)) = rx.try_recv()
         {
             let files = progress.load(Ordering::Relaxed);
             cleanspace::keep_selection(&self.items, &mut items);
             self.items = items;
             self.has_scanned = true;
-            self.comparing = !done;
-            if done {
+            self.phase = phase;
+            if phase.is_none() {
                 self.scanned_files = files;
                 self.telemetry.scan_done("gui", files, &self.items);
                 self.scanning = None;
@@ -589,7 +604,35 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        let (bg, side, border, _) = palette(ui.visuals().dark_mode);
+        let (bg, side, border, muted) = palette(ui.visuals().dark_mode);
+        egui::Panel::top("topbar")
+            .exact_size(58.0)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(side)
+                    .inner_margin(Margin::symmetric(18, 0))
+                    .stroke(Stroke::new(1.0, border)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    if let Some(logo) = &self.logo {
+                        ui.add(egui::Image::new(logo).fit_to_exact_size(vec2(32.0, 32.0)));
+                    }
+                    ui.add_space(4.0);
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(RichText::new("cleanSpace").size(19.0).strong());
+                    ui.label(RichText::new("by pelamx").size(13.0).color(ACCENT));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        ui.label(
+                            RichText::new("Akıllı depolama temizleyici")
+                                .small()
+                                .color(muted),
+                        );
+                    });
+                });
+            });
         egui::Panel::left("sidebar")
             .exact_size(230.0)
             .resizable(false)
@@ -878,11 +921,7 @@ fn item_row(ui: &mut Ui, item: &mut Item, idx: usize) {
 
     let text_x = rect.left() + 44.0;
     let text_w = (rect.right() - 150.0 - text_x).max(40.0);
-    let name = item
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let name = item.name();
     let dir = item
         .path
         .parent()

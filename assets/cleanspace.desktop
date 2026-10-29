@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=cleanSpace by pelamx
+Comment=Akıllı depolama temizleyici
+Exec=cleanspace
+Icon=cleanspace
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=cleanspace

@@ -1,6 +1,6 @@
 //! Terminal UI for servers / cloud machines: `cleanspace-tui [FOLDER]` (default: home).
 
-use cleanspace::scan::{Category, Item, human_size};
+use cleanspace::scan::{Category, Item, Phase, human_size};
 use cleanspace::telemetry::{self, Telemetry};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -28,7 +28,9 @@ struct App {
     tab: usize,
     list: ListState,
     /// Messages are (final, items): first the partial list without duplicates, then the final one.
-    scanning: Option<(Receiver<(bool, Vec<Item>)>, Arc<AtomicUsize>)>,
+    scanning: Option<(Receiver<(Option<Phase>, Vec<Item>)>, Arc<AtomicUsize>)>,
+    /// Phase of the partial results on screen.
+    phase: Option<Phase>,
     prompt: Prompt,
     deleting: Option<cleanspace::Deletion>,
     status: String,
@@ -57,6 +59,7 @@ fn main() -> io::Result<()> {
         tab: 0,
         list: ListState::default(),
         scanning: None,
+        phase: None,
         prompt,
         deleting: None,
         status: String::new(),
@@ -73,10 +76,10 @@ impl App {
         let (root, counter) = (self.root.clone(), progress.clone());
         std::thread::spawn(move || {
             let partial_tx = tx.clone();
-            let items = cleanspace::scan_default(&root, &counter, move |items| {
-                let _ = partial_tx.send((false, items));
+            let items = cleanspace::scan_default(&root, &counter, move |items, phase| {
+                let _ = partial_tx.send((Some(phase), items));
             });
-            tx.send((true, items))
+            tx.send((None, items))
         });
         self.items.clear();
         self.scanning = Some((rx, progress));
@@ -99,9 +102,10 @@ impl App {
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         loop {
             while let Some((rx, progress)) = &self.scanning
-                && let Ok((done, mut items)) = rx.try_recv()
+                && let Ok((phase, mut items)) = rx.try_recv()
             {
-                if done {
+                self.phase = phase;
+                if phase.is_none() {
                     self.telemetry
                         .scan_done("tui", progress.load(Ordering::Relaxed), &items);
                     self.scanning = None;
@@ -226,7 +230,9 @@ impl App {
         .areas(f.area());
 
         let scanning = match (&self.scanning, &self.deleting) {
-            (Some(_), _) if !self.items.is_empty() => "  — kopyalar karşılaştırılıyor…".to_string(),
+            (Some(_), _) if self.phase == Some(Phase::Comparing) => {
+                "  — kopyalar karşılaştırılıyor…".to_string()
+            }
             (Some((_, p)), _) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
             (_, Some(d)) => format!(
                 "  — siliniyor… {}/{}",

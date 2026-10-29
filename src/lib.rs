@@ -56,6 +56,18 @@ impl Deletion {
 }
 
 fn remove(path: &std::path::Path) -> std::io::Result<()> {
+    // Emptying the trash keeps the trash folder itself; the OS expects it to exist.
+    if scan::trash_dir().as_deref() == Some(path) {
+        for entry in std::fs::read_dir(path)? {
+            remove(&entry?.path())?;
+        }
+        if !cfg!(target_os = "macos") {
+            // freedesktop trash layout
+            std::fs::create_dir_all(path.join("files"))?;
+            std::fs::create_dir_all(path.join("info"))?;
+        }
+        return Ok(());
+    }
     if path.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
@@ -83,10 +95,10 @@ pub fn keep_selection(old: &[Item], new: &mut [Item]) {
 pub fn scan_default(
     root: &std::path::Path,
     progress: &AtomicUsize,
-    on_partial: impl FnOnce(Vec<Item>),
+    mut on_partial: impl FnMut(Vec<Item>, scan::Phase),
 ) -> Vec<Item> {
     let places = scan::Places::system();
     let mut roots = vec![root];
     roots.extend(places.downloads.as_deref());
-    scan::scan(&roots, &places, progress, on_partial)
+    scan::scan(&roots, &places, progress, &mut on_partial)
 }
