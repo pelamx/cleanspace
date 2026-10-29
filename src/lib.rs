@@ -63,10 +63,30 @@ fn remove(path: &std::path::Path) -> std::io::Result<()> {
     }
 }
 
+/// Carries the user's ticks from `old` (e.g. a partial scan list) over to the same items in `new`.
+pub fn keep_selection(old: &[Item], new: &mut [Item]) {
+    let before: std::collections::HashMap<_, _> = old
+        .iter()
+        .map(|i| (&i.path, (i.category, i.selected)))
+        .collect();
+    for item in new {
+        if let Some(&(cat, selected)) = before.get(&item.path)
+            && cat == item.category
+        {
+            item.selected = selected;
+        }
+    }
+}
+
 /// Default scan roots: the given folder plus the Downloads folder (for "old downloads").
-pub fn scan_default(root: &std::path::Path, progress: &AtomicUsize) -> Vec<Item> {
+/// See [`scan::scan`] for `on_partial`.
+pub fn scan_default(
+    root: &std::path::Path,
+    progress: &AtomicUsize,
+    on_partial: impl FnOnce(Vec<Item>),
+) -> Vec<Item> {
     let places = scan::Places::system();
     let mut roots = vec![root];
     roots.extend(places.downloads.as_deref());
-    scan::scan(&roots, &places, progress)
+    scan::scan(&roots, &places, progress, on_partial)
 }

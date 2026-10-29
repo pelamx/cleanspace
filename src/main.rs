@@ -154,7 +154,10 @@ struct App {
     root: String,
     items: Vec<Item>,
     tab: Category,
-    scanning: Option<(Receiver<Vec<Item>>, Arc<AtomicUsize>)>,
+    /// Messages are (final, items): first the partial list without duplicates, then the final one.
+    scanning: Option<(Receiver<(bool, Vec<Item>)>, Arc<AtomicUsize>)>,
+    /// Partial results are shown, duplicates are still being compared.
+    comparing: bool,
     scanned_files: usize,
     has_scanned: bool,
     confirm: bool,
@@ -171,6 +174,7 @@ impl Default for App {
             items: Vec::new(),
             tab: Category::Duplicate,
             scanning: None,
+            comparing: false,
             scanned_files: 0,
             has_scanned: false,
             confirm: false,
@@ -193,11 +197,17 @@ impl App {
         let (tx, rx) = channel();
         let counter = progress.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(cleanspace::scan_default(&root, &counter));
+            let (partial_tx, partial_ctx) = (tx.clone(), ctx.clone());
+            let items = cleanspace::scan_default(&root, &counter, move |items| {
+                let _ = partial_tx.send((false, items));
+                partial_ctx.request_repaint();
+            });
+            let _ = tx.send((true, items));
             ctx.request_repaint();
         });
         self.items.clear();
         self.status.clear();
+        self.comparing = false;
         self.scanning = Some((rx, progress));
     }
 
@@ -378,17 +388,17 @@ impl App {
 
     fn content(&mut self, ui: &mut Ui) {
         let (_, _, _, muted) = palette(ui.visuals().dark_mode);
-        if let Some((_, progress)) = &self.scanning {
+        if let Some((_, progress)) = &self.scanning
+            && !self.comparing
+        {
             let n = progress.load(Ordering::Relaxed);
             empty_state(ui, |ui| {
                 ui.add(egui::Spinner::new().size(42.0).color(ACCENT));
                 ui.add_space(10.0);
                 ui.label(RichText::new("Taranıyor…").size(20.0).strong());
                 ui.label(
-                    RichText::new(format!(
-                        "{n} dosya incelendi. Kopyalar için içerikler karşılaştırılıyor."
-                    ))
-                    .color(muted),
+                    RichText::new(format!("{n} dosya incelendi. Sonuçlar birazdan görünecek."))
+                        .color(muted),
                 );
             });
             return;
@@ -426,6 +436,12 @@ impl App {
             });
         });
         ui.label(RichText::new(description(tab)).color(muted));
+        if self.comparing {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(14.0).color(ACCENT));
+                ui.label(RichText::new("Kopyalar karşılaştırılıyor… Diğer sonuçlar hazır, temizlik tarama bitince açılır.").small().color(ACCENT));
+            });
+        }
         ui.add_space(6.0);
 
         // Duplicate items arrive sorted by group, so a header goes wherever the group number changes.
@@ -442,6 +458,14 @@ impl App {
                 last_group = item.group;
             }
             rows.push(Row::Item(i));
+        }
+        if rows.is_empty() && self.comparing && tab == Category::Duplicate {
+            empty_state(ui, |ui| {
+                ui.add(egui::Spinner::new().size(36.0).color(ACCENT));
+                ui.label(RichText::new("Kopyalar aranıyor…").size(17.0).strong());
+                ui.label(RichText::new("Aynı boyuttaki dosyaların içerikleri karşılaştırılıyor. Diğer kategorilere şimdiden bakabilirsiniz.").color(muted));
+            });
+            return;
         }
         if rows.is_empty() {
             empty_state(ui, |ui| {
@@ -539,23 +563,30 @@ impl eframe::App for App {
         if self.deleting.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
-        if let Some((rx, progress)) = &self.scanning {
-            if let Ok(items) = rx.try_recv() {
-                self.scanned_files = progress.load(Ordering::Relaxed);
-                self.telemetry.scan_done("gui", self.scanned_files, &items);
-                self.items = items;
+        while let Some((rx, progress)) = &self.scanning
+            && let Ok((done, mut items)) = rx.try_recv()
+        {
+            let files = progress.load(Ordering::Relaxed);
+            cleanspace::keep_selection(&self.items, &mut items);
+            self.items = items;
+            self.has_scanned = true;
+            self.comparing = !done;
+            if done {
+                self.scanned_files = files;
+                self.telemetry.scan_done("gui", files, &self.items);
                 self.scanning = None;
-                self.has_scanned = true;
-                // Open the first category that has something in it.
-                if let Some(cat) = Category::ALL
+            }
+            // Stay on the current category unless it is empty.
+            if !self.items.iter().any(|i| i.category == self.tab)
+                && let Some(cat) = Category::ALL
                     .into_iter()
                     .find(|&c| self.items.iter().any(|i| i.category == c))
-                {
-                    self.tab = cat;
-                }
-            } else {
-                ctx.request_repaint_after(Duration::from_millis(100));
+            {
+                self.tab = cat;
             }
+        }
+        if self.scanning.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
 
         let (bg, side, border, _) = palette(ui.visuals().dark_mode);

@@ -47,6 +47,7 @@ impl Category {
     }
 }
 
+#[derive(Clone)]
 pub struct Item {
     pub path: PathBuf,
     pub size: u64,
@@ -146,7 +147,14 @@ fn same_hash(paths: Vec<PathBuf>, limit: Option<u64>) -> Vec<Vec<PathBuf>> {
 
 /// Scans `roots` (symlinks not followed). Each file lands in at most one category so sizes are never double-counted.
 /// Content of `places.junk` folders found under a root is reported per first-level entry instead of per file.
-pub fn scan(roots: &[&Path], places: &Places, progress: &AtomicUsize) -> Vec<Item> {
+/// `on_partial` gets everything except duplicates as soon as the walk is done, because comparing contents
+/// for duplicates is by far the slowest step; the returned list is the final one and replaces it.
+pub fn scan(
+    roots: &[&Path],
+    places: &Places,
+    progress: &AtomicUsize,
+    on_partial: impl FnOnce(Vec<Item>),
+) -> Vec<Item> {
     // path -> (size, modified, protected = inside a hidden folder or a git repo: app/project internals)
     let mut files: HashMap<PathBuf, (u64, SystemTime, bool)> = HashMap::new();
     let mut junk_dirs: HashMap<PathBuf, u64> = HashMap::new();
@@ -192,18 +200,25 @@ pub fn scan(roots: &[&Path], places: &Places, progress: &AtomicUsize) -> Vec<Ite
         }
     }
 
-    let mut items = Vec::new();
     let mut junk_items: Vec<_> = junk_dirs.into_iter().collect();
     junk_items.sort_by(|a, b| b.1.cmp(&a.1));
-    for (path, size) in junk_items {
-        items.push(Item {
+    let mut items: Vec<Item> = junk_items
+        .into_iter()
+        .map(|(path, size)| Item {
             path,
             size,
             category: Category::Junk,
             group: 0,
             selected: true,
-        });
-    }
+        })
+        .collect();
+    on_partial(
+        items
+            .iter()
+            .cloned()
+            .chain(classify(&files, places))
+            .collect(),
+    );
 
     // Duplicates: same size, then same first 64 KB, then same full content. Only user files, not app internals.
     let mut by_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
@@ -237,12 +252,17 @@ pub fn scan(roots: &[&Path], places: &Places, progress: &AtomicUsize) -> Vec<Ite
         }
     }
 
+    items.extend(classify(&files, places));
+    items
+}
+
+/// Junk-by-name, old downloads and large files among `files`, biggest first.
+fn classify(files: &HashMap<PathBuf, (u64, SystemTime, bool)>, places: &Places) -> Vec<Item> {
     let now = SystemTime::now();
-    let mut rest: Vec<_> = files.into_iter().collect();
-    rest.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-    for (path, (size, modified, _)) in rest {
+    let mut items = Vec::new();
+    for (path, &(size, modified, _)) in files {
         let old = now.duration_since(modified).unwrap_or_default() > OLD_DOWNLOAD;
-        let (category, selected) = if is_junk(&path) {
+        let (category, selected) = if is_junk(path) {
             (Category::Junk, true)
         } else if old
             && places
@@ -257,13 +277,14 @@ pub fn scan(roots: &[&Path], places: &Places, progress: &AtomicUsize) -> Vec<Ite
             continue;
         };
         items.push(Item {
-            path,
+            path: path.clone(),
             size,
             category,
             group: 0,
             selected,
         });
     }
+    items.sort_by(|a, b| b.size.cmp(&a.size));
     items
 }
 
@@ -321,7 +342,16 @@ mod tests {
             junk: vec![dir.join("cache")],
             user: vec![dir.join("sub")],
         };
-        let items = scan(&[&dir], &places, &progress);
+        let mut partial = Vec::new();
+        let items = scan(&[&dir], &places, &progress, |p| partial = p);
+        assert_eq!(
+            partial
+                .iter()
+                .filter(|i| i.category == Category::Junk)
+                .count(),
+            3
+        );
+        assert!(partial.iter().all(|i| i.category != Category::Duplicate));
         fs::remove_dir_all(&dir).unwrap();
 
         let of = |c: Category| items.iter().filter(|i| i.category == c).collect::<Vec<_>>();

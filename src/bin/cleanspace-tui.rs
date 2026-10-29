@@ -27,7 +27,8 @@ struct App {
     items: Vec<Item>,
     tab: usize,
     list: ListState,
-    scanning: Option<(Receiver<Vec<Item>>, Arc<AtomicUsize>)>,
+    /// Messages are (final, items): first the partial list without duplicates, then the final one.
+    scanning: Option<(Receiver<(bool, Vec<Item>)>, Arc<AtomicUsize>)>,
     prompt: Prompt,
     deleting: Option<cleanspace::Deletion>,
     status: String,
@@ -70,7 +71,13 @@ impl App {
         let progress = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = channel();
         let (root, counter) = (self.root.clone(), progress.clone());
-        std::thread::spawn(move || tx.send(cleanspace::scan_default(&root, &counter)));
+        std::thread::spawn(move || {
+            let partial_tx = tx.clone();
+            let items = cleanspace::scan_default(&root, &counter, move |items| {
+                let _ = partial_tx.send((false, items));
+            });
+            tx.send((true, items))
+        });
         self.items.clear();
         self.scanning = Some((rx, progress));
     }
@@ -91,14 +98,19 @@ impl App {
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         loop {
-            if let Some((rx, progress)) = &self.scanning
-                && let Ok(items) = rx.try_recv()
+            while let Some((rx, progress)) = &self.scanning
+                && let Ok((done, mut items)) = rx.try_recv()
             {
-                self.telemetry
-                    .scan_done("tui", progress.load(Ordering::Relaxed), &items);
+                if done {
+                    self.telemetry
+                        .scan_done("tui", progress.load(Ordering::Relaxed), &items);
+                    self.scanning = None;
+                }
+                cleanspace::keep_selection(&self.items, &mut items);
+                if self.items.is_empty() {
+                    self.list.select(Some(0));
+                }
                 self.items = items;
-                self.scanning = None;
-                self.list.select(Some(0));
             }
             if let Some((failed, freed)) = self.deleting.as_ref().and_then(|d| d.poll()) {
                 let ok = self.deleting.take().unwrap().total - failed.len();
@@ -179,6 +191,11 @@ impl App {
                         .visible()
                         .into_iter()
                         .for_each(|i| self.items[i].selected = c == 'a'),
+                    // The final scan list would bring deleted items back, so deleting waits for it.
+                    KeyCode::Char('d' | 'D') if self.scanning.is_some() => {
+                        self.status =
+                            "Kopyalar hâlâ karşılaştırılıyor, tarama bitince silebilirsiniz.".into()
+                    }
                     KeyCode::Char('d') if self.selected_totals().0 > 0 => {
                         self.prompt = Prompt::Trash
                     }
@@ -209,6 +226,7 @@ impl App {
         .areas(f.area());
 
         let scanning = match (&self.scanning, &self.deleting) {
+            (Some(_), _) if !self.items.is_empty() => "  — kopyalar karşılaştırılıyor…".to_string(),
             (Some((_, p)), _) => format!("  — taranıyor… {} dosya", p.load(Ordering::Relaxed)),
             (_, Some(d)) => format!(
                 "  — siliniyor… {}/{}",
