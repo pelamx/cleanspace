@@ -239,6 +239,7 @@ impl App {
                     }
                     KeyCode::Char('d' | 'D') if self.plan.clean_left().is_some_and(|left| self.selected_totals().1 > left) => {
                         let left = human_size(self.plan.clean_left().unwrap_or(0));
+                        self.telemetry.used("tui", "pro", "clean_limit");
                         self.status = tf!(
                             "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız için: deskMonk uygulaması → ⭐ Pro",
                             "The free plan cleans 2 GB a day; {left} left today. For no limit: deskMonk app → ⭐ Get Pro",

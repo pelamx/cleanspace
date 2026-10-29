@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
-import { esc, hardwareHtml, humanSize, parseEvent } from "../src/index";
-import { mayActivate, newKey, periodEnd, verifySignature } from "../src/license";
+import { compareVersions, esc, hardwareHtml, humanSize } from "../src/admin";
+import { parseEvent } from "../src/index";
+import { mayActivate, newKey, periodEnd, planOf, verifySignature } from "../src/license";
+import { buyPage, js, pickLang } from "../src/pages";
+import { LANGS, USD, money, word } from "../src/i18n";
 
 test("validates events the way server/ does", () => {
   const good = `{"install_id":"abc-123","version":"0.1.0","os":"linux","client":"tui","kind":"scan","files":10,"bytes":2048,"junk_bytes":2048}`;
@@ -18,6 +21,28 @@ test("validates events the way server/ does", () => {
   expect(html).toContain("[APPLE]");
   expect(html).toContain("Apple M5 Pro &lt;b&gt;");
   expect(html).not.toContain("Pro <b>");
+});
+
+test("events from 0.4: features, plan and store", () => {
+  const vault = `{"install_id":"abc-123","version":"0.4.0","os":"macos","client":"gui","kind":"vault","detail":"encrypt","plan":"free","channel":"appstore"}`;
+  expect(parseEvent(vault)).toMatchObject({ kind: "vault", detail: "encrypt", plan: "free", channel: "appstore" });
+  expect(parseEvent(vault.replace(',"plan":"free","channel":"appstore"', "")).plan).toBeNull();
+  expect(() => parseEvent(vault.replace('"free"', '"gold"'))).toThrow();
+  expect(() => parseEvent(vault.replace('"appstore"', '"steam"'))).toThrow();
+  expect(() => parseEvent(vault.replace('"encrypt"', '"<b>"'))).toThrow();
+});
+
+test("only deskMonk's Paddle prices make a license", () => {
+  const env = { DB: null as any, PADDLE_PRICE_MONTHLY: "pri_m", PADDLE_PRICE_YEARLY: "pri_y" };
+  expect(planOf({ items: [{ price: { id: "pri_y" } }] }, env)).toBe("yearly");
+  expect(planOf({ items: [{ price: { id: "pri_m" } }] }, env)).toBe("monthly");
+  // Another product sold from the same Paddle account.
+  expect(planOf({ items: [{ price: { id: "pri_other" } }] }, env)).toBeNull();
+  expect(planOf({}, { DB: null as any })).toBeNull();
+});
+
+test("versions sort newest first", () => {
+  expect(["0.3.0", "0.10.0", "0.9.1"].sort(compareVersions)).toEqual(["0.10.0", "0.9.1", "0.3.0"]);
 });
 
 test("formats", () => {
@@ -53,4 +78,43 @@ test("license rules", () => {
   expect(mayActivate(["a", "b"], "c")).toBe(true);
   expect(mayActivate(["a", "b", "c"], "d")).toBe(false);
   expect(mayActivate(["a", "b", "c"], "b")).toBe(true);
+});
+
+test("buyer pages: language, unconfigured checkout, escaping", async () => {
+  const req = (url: string, headers: Record<string, string> = {}) => new Request(url, { headers });
+  expect(pickLang(req("https://deskmonk.app/buy?lang=es", { Cookie: "lang=tr" }))).toBe("es");
+  expect(pickLang(req("https://deskmonk.app/buy", { Cookie: "a=1; lang=tr" }))).toBe("tr");
+  expect(pickLang(req("https://deskmonk.app/buy", { "Accept-Language": "sw-KE,tr;q=0.8" }))).toBe("tr");
+  expect(pickLang(req("https://deskmonk.app/buy?lang=xx"))).toBe("en");
+
+  const opts = { configured: false, plan: "yearly" as const, install: "", token: "", sandbox: true, prices: { monthly: "", yearly: "" }, country: null };
+  const soon = buyPage(req("https://deskmonk.app/buy"), "tr", opts);
+  expect(soon.status).toBe(503);
+  expect(await soon.text()).toContain("Ödeme yakında açılıyor");
+
+  const live = await buyPage(req("https://deskmonk.app/buy"), "en", { ...opts, configured: true, token: "</script><b>", prices: { monthly: "pri_m", yearly: "pri_y" } }).text();
+  expect(live).not.toContain("</script><b>");
+  expect(live).toContain('value="yearly" checked');
+  expect(js("</script>")).toBe('"\\u003c/script>"');
+});
+
+test("language: chosen, then country, then browser; prices filled in", () => {
+  const at = (url: string, country: string | null, headers: Record<string, string> = {}) =>
+    Object.assign(new Request(url, { headers }), country ? { cf: { country } } : {});
+  expect(pickLang(at("https://deskmonk.app/", "DE", { "Accept-Language": "en-US" }))).toBe("de");
+  expect(pickLang(at("https://deskmonk.app/", "BR"))).toBe("pt");
+  expect(pickLang(at("https://deskmonk.app/", "HK"))).toBe("zh-TW");
+  expect(pickLang(at("https://deskmonk.app/", "DE", { Cookie: "lang=ja" }))).toBe("ja");
+  expect(pickLang(at("https://deskmonk.app/?lang=ar", "DE", { Cookie: "lang=ja" }))).toBe("ar");
+  expect(pickLang(at("https://deskmonk.app/", "US", { "Accept-Language": "nn-NO,en;q=0.5" }))).toBe("nb");
+  expect(pickLang(at("https://deskmonk.app/", "XX", { "Accept-Language": "zh-Hant-TW" }))).toBe("zh-TW");
+  expect(pickLang(at("https://deskmonk.app/", null))).toBe("en");
+
+  expect(word("en", "price.yearnote")).toBe("$2.08 a month, billed yearly");
+  expect(word("en", "price.save")).toBe("−17%");
+  expect(word("en", "meta.pdesc")).toContain("$2.50 a month or $25 a year");
+  expect(word("tr", "price.save")).toBe("−%17");
+  expect(money("de", USD.monthly)).toMatch(/2,50\s\$/);
+  // Every language has every key, so no page shows English by accident.
+  for (const lang of LANGS) expect(word(lang, "hero.title"), lang).not.toBe("");
 });

@@ -86,10 +86,10 @@ Donanım eklenmeden önce "evet" demiş kullanıcılara izin yeniden sorulur.
 Uygulama `DESKMONK_TELEMETRY_URL` ile derlenmezse hiçbir veri gönderilmez ve izin de sorulmaz.
 
 ```sh
-DESKMONK_TELEMETRY_URL=https://stats.bubbletranslate.app/api/events cargo build --release
+DESKMONK_TELEMETRY_URL=https://deskmonk.app/api/events cargo build --release
 ```
 
-Canlı sunucu `worker/` içindeki Cloudflare Worker'dır (D1 veritabanı `deskmonk-stats`, adres `stats.bubbletranslate.app`).
+Canlı sunucu `worker/` içindeki Cloudflare Worker `deskmonk`dır (D1 veritabanı `deskmonk`, adres `deskmonk.app`): web sitesi (`docs/`), API, `/admin` ve `/buy` aynı adreste.
 Admin şifresi `ADMIN_TOKEN` secret'ıdır:
 
 ```sh

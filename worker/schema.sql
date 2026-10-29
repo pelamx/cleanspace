@@ -1,14 +1,26 @@
+-- Safe to run again (npm run schema:remote). Columns added after a table first shipped are in migrate.sql.
 CREATE TABLE IF NOT EXISTS events(
     id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL,
     os TEXT NOT NULL, client TEXT NOT NULL, kind TEXT NOT NULL, files INTEGER NOT NULL, bytes INTEGER NOT NULL,
-    duplicate_bytes INTEGER NOT NULL, junk_bytes INTEGER NOT NULL, old_download_bytes INTEGER NOT NULL, large_bytes INTEGER NOT NULL);
+    duplicate_bytes INTEGER NOT NULL, junk_bytes INTEGER NOT NULL, old_download_bytes INTEGER NOT NULL, large_bytes INTEGER NOT NULL,
+    -- country: Cloudflare's guess from the IP (the IP itself is never stored); plan free|pro; channel web|appstore;
+    -- detail: what a "vault"/"pro"/"bought" event was about. NULL on events from apps older than 0.4.
+    country TEXT, plan TEXT, channel TEXT, detail TEXT);
 CREATE INDEX IF NOT EXISTS events_install ON events(install_id, ts);
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 CREATE TABLE IF NOT EXISTS hardware(install_id TEXT PRIMARY KEY, ts INTEGER NOT NULL, specs TEXT NOT NULL);
--- Pro subscriptions from Paddle webhooks; a license key works on up to 3 installations (activations).
+-- Pro subscriptions from Paddle webhooks (email asked from Paddle's API), plus licenses issued by hand in /admin (customer_id "manual").
+-- A license key works on up to 3 installations (activations).
 CREATE TABLE IF NOT EXISTS subscriptions(
     id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, status TEXT NOT NULL, period_end INTEGER NOT NULL,
-    license_key TEXT NOT NULL UNIQUE, install_id TEXT, txn TEXT, event_at TEXT NOT NULL);
+    license_key TEXT NOT NULL UNIQUE, install_id TEXT, txn TEXT, event_at TEXT NOT NULL,
+    -- ref: the order reference from the /buy page (custom_data), so /welcome can show the key of this purchase.
+    plan TEXT, created_at INTEGER, email TEXT, ref TEXT);
 CREATE INDEX IF NOT EXISTS subscriptions_install ON subscriptions(install_id);
 CREATE INDEX IF NOT EXISTS subscriptions_txn ON subscriptions(txn);
+CREATE INDEX IF NOT EXISTS subscriptions_ref ON subscriptions(ref);
 CREATE TABLE IF NOT EXISTS activations(license_key TEXT NOT NULL, install_id TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(license_key, install_id));
+-- Installations the operator marked as their own: listed, but left out of every count.
+CREATE TABLE IF NOT EXISTS ignored_installs(install_id TEXT PRIMARY KEY, ts INTEGER NOT NULL);
+-- What was done in /admin, newest first in the panel.
+CREATE TABLE IF NOT EXISTS admin_log(id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, action TEXT NOT NULL, ref TEXT, detail TEXT NOT NULL);

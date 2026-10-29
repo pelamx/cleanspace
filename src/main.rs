@@ -20,6 +20,16 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+mod access;
+#[cfg(feature = "appstore")]
+mod store;
+
+/// Mac App Store build: sandboxed, Pro through Apple, no App Lock.
+const APPSTORE: bool = cfg!(feature = "appstore");
+const APPLE_EULA: &str = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const PRIVACY_POLICY: &str = "https://deskmonk.app/privacy";
+
 const ACCENT: Color32 = Color32::from_rgb(79, 110, 247);
 const DANGER: Color32 = Color32::from_rgb(229, 72, 77);
 const ROW_H: f32 = 46.0;
@@ -42,6 +52,7 @@ const NEON: [Color32; 8] = [
 ];
 
 fn main() -> eframe::Result {
+    deskmonk::use_real_home();
     i18n::init();
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("bundled icon is a valid PNG");
@@ -69,7 +80,14 @@ fn main() -> eframe::Result {
             setup_style(&cc.egui_ctx);
             let mut app = App::default();
             app.detect_hardware(cc.egui_ctx.clone());
-            if cfg!(target_os = "macos") {
+            #[cfg(target_os = "macos")]
+            if deskmonk::sandboxed() {
+                access::restore();
+            }
+            #[cfg(feature = "appstore")]
+            store::start(&cc.egui_ctx);
+            // App Lock stops other apps, which the App Store sandbox does not allow.
+            if cfg!(target_os = "macos") && !APPSTORE {
                 let (tx, rx) = channel();
                 let ctx = cc.egui_ctx.clone();
                 app.watcher = Some(applock::Watcher::start(app.lock.apps.clone(), move |blocked| {
@@ -280,6 +298,10 @@ struct App {
     vault_job: Option<(Receiver<Result<(PathBuf, Option<String>), String>>, Arc<AtomicU64>, Arc<AtomicU64>)>,
     /// Last finished job: what it made, whether it encrypted, the Trash error if any.
     vault_done: Option<(PathBuf, bool, Option<String>)>,
+    /// Vaults made here, newest first (saved in the config folder).
+    vaults: Vec<PathBuf>,
+    /// The password pop-up for opening a vault from the list is shown.
+    vault_prompt: bool,
     plan: Plan,
     pro_open: bool,
     /// When a checkout was opened: the license is re-checked every few seconds until Pro arrives.
@@ -291,6 +313,9 @@ struct App {
     pro_check: Option<Receiver<Result<(String, u64), String>>>,
     /// When the last license check started; negative = not yet.
     pro_checked: f64,
+    /// App Store build: localized prices (monthly, yearly) and whether a purchase sheet is open.
+    store_prices: (Option<String>, Option<String>),
+    store_busy: bool,
 }
 
 impl Default for App {
@@ -338,6 +363,8 @@ impl Default for App {
             vault_error: String::new(),
             vault_job: None,
             vault_done: None,
+            vaults: vault::list(),
+            vault_prompt: false,
             plan: Plan::load(),
             pro_open: false,
             pro_waiting: None,
@@ -346,13 +373,15 @@ impl Default for App {
             pro_error: String::new(),
             pro_check: None,
             pro_checked: -1.0,
+            store_prices: (None, None),
+            store_busy: false,
         }
     }
 }
 
 impl App {
     fn start_scan(&mut self, ctx: egui::Context) {
-        let root = PathBuf::from(self.root.trim());
+        let Some(root) = self.granted(PathBuf::from(self.root.trim())) else { return };
         if !root.is_dir() {
             self.status = tf!("Klasör bulunamadı: {}", "Folder not found: {}", "Carpeta no encontrada: {}", root.display());
             return;
@@ -386,7 +415,7 @@ impl App {
     }
 
     fn start_map(&mut self, ctx: egui::Context) {
-        let root = PathBuf::from(self.root.trim());
+        let Some(root) = self.granted(PathBuf::from(self.root.trim())) else { return };
         if !root.is_dir() {
             self.status = tf!("Klasör bulunamadı: {}", "Folder not found: {}", "Carpeta no encontrada: {}", root.display());
             return;
@@ -400,6 +429,12 @@ impl App {
             ctx.request_repaint();
         });
         self.map_scan = Some((rx, files));
+    }
+
+    /// Opens the Pro dialog; `from` (the button or limit that opened it) goes to the usage stats.
+    fn open_pro(&mut self, from: &str) {
+        self.pro_open = true;
+        self.telemetry.used("gui", "pro", from);
     }
 
     fn delete_selected(&mut self, ctx: egui::Context) {
@@ -488,10 +523,11 @@ impl App {
             }
         }
         let sub = match &self.vault_job {
-            Some(_) => t("Çalışıyor…", "Working…", "Trabajando…"),
-            None => t("Dosya ve klasör şifreleme", "Encrypt files and folders", "Cifrar archivos y carpetas"),
+            Some(_) => t("Çalışıyor…", "Working…", "Trabajando…").to_string(),
+            None if self.vaults.is_empty() => t("Dosya ve klasör şifreleme", "Encrypt files and folders", "Cifrar archivos y carpetas").to_string(),
+            None => tf!("{} şifreli öğe", "{} encrypted items", "{} elementos cifrados", self.vaults.len()),
         };
-        if nav_item(ui, self.page == Page::Vault, "🔑", t("Kasa", "Vault", "Caja fuerte"), 0, sub).clicked() {
+        if nav_item(ui, self.page == Page::Vault, "🔑", t("Kasa", "Vault", "Caja fuerte"), 0, &sub).clicked() {
             self.page = Page::Vault;
         }
         if telemetry::URL.is_some() {
@@ -987,10 +1023,13 @@ impl App {
     fn monk_tick(&mut self, ctx: &egui::Context) {
         let event = self.monk.tick(Instant::now());
         match event {
-            Some(focus::Event::FocusDone) => notify(
-                t("Odak tamamlandı 🧘", "Focus done 🧘", "Enfoque terminado 🧘"),
-                t("Mola zamanı. Biraz dinlen.", "Time for a break. Rest a little.", "Hora del descanso. Descanse un poco."),
-            ),
+            Some(focus::Event::FocusDone) => {
+                self.telemetry.used("gui", "focus", "");
+                notify(
+                    t("Odak tamamlandı 🧘", "Focus done 🧘", "Enfoque terminado 🧘"),
+                    t("Mola zamanı. Biraz dinlen.", "Time for a break. Rest a little.", "Hora del descanso. Descanse un poco."),
+                )
+            }
             Some(focus::Event::BreakDone) => notify(
                 t("Mola bitti", "Break over", "Descanso terminado"),
                 t("Yeni bir odak oturumuna hazır.", "Ready for another focus session.", "Listo para otra sesión de enfoque."),
@@ -1006,8 +1045,62 @@ impl App {
         }
     }
 
+    /// The sandboxed build may read a folder only after the user picked it, so the first scan of a folder opens
+    /// the folder panel right there (one click on Open). Returns the folder to use, None if the user declined.
+    fn granted(&mut self, dir: PathBuf) -> Option<PathBuf> {
+        #[cfg(target_os = "macos")]
+        if deskmonk::sandboxed() {
+            if std::fs::read_dir(&dir).is_ok() {
+                access::remember(&dir);
+                return Some(dir);
+            }
+            let Some(picked) = rfd::FileDialog::new()
+                .set_directory(&dir)
+                .set_title(t("deskMonk'un taraması için klasörü onaylayın", "Confirm the folder for deskMonk to scan", "Confirme la carpeta que deskMonk analizará"))
+                .pick_folder()
+            else {
+                self.status = t(
+                    "macOS, deskMonk'un bir klasöre bakması için sizin seçmenizi istiyor. Tarama için klasörü seçip Aç'a basın.",
+                    "macOS lets deskMonk look into a folder only after you pick it. Pick the folder and click Open to scan.",
+                    "macOS solo deja a deskMonk mirar una carpeta después de que usted la elija. Elija la carpeta y pulse Abrir.",
+                )
+                .into();
+                return None;
+            };
+            access::remember(&picked);
+            self.root = picked.display().to_string();
+            return Some(picked);
+        }
+        Some(dir)
+    }
+
     /// Checks the license at startup, and every few seconds for an hour after a checkout was opened.
     fn poll_license(&mut self, ctx: &egui::Context) {
+        #[cfg(feature = "appstore")]
+        for event in store::take() {
+            match event {
+                store::Event::ProUntil(until) => self.plan.set_license(String::new(), until),
+                store::Event::Prices(monthly, yearly) => self.store_prices = (monthly, yearly),
+                store::Event::Bought => {
+                    self.store_busy = false;
+                    self.telemetry.used("gui", "bought", "appstore");
+                }
+                store::Event::Cancelled => self.store_busy = false,
+                store::Event::Pending => {
+                    self.store_busy = false;
+                    self.pro_error = t(
+                        "Satın alma onay bekliyor (ör. Aile Paylaşımı). Onaylanınca Pro kendiliğinden açılır.",
+                        "The purchase is waiting for approval (e.g. Family Sharing). Pro turns on by itself once approved.",
+                        "La compra espera aprobación (p. ej., En familia). Pro se activa solo al aprobarse.",
+                    )
+                    .into();
+                }
+                store::Event::Failed => {
+                    self.store_busy = false;
+                    self.pro_error = t("Satın alma tamamlanamadı. Lütfen tekrar deneyin.", "The purchase could not be completed. Please try again.", "No se pudo completar la compra. Inténtelo de nuevo.").into();
+                }
+            }
+        }
         if let Some(rx) = &self.pro_check
             && let Ok(result) = rx.try_recv()
         {
@@ -1095,7 +1188,8 @@ impl App {
                     t("istediğiniz kadar", "as many as you like", "todas las que quiera"),
                 ),
             ];
-            for (icon, free, with_pro) in rows {
+            let shown = if APPSTORE { &rows[..2] } else { &rows[..] };
+            for (icon, free, with_pro) in shown.iter().cloned() {
                 card(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -1110,7 +1204,11 @@ impl App {
             }
             ui.add_space(8.0);
             if pro {
-                if !self.plan.key.is_empty() && wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
+                if APPSTORE {
+                    if wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
+                        open_url("https://apps.apple.com/account/subscriptions");
+                    }
+                } else if !self.plan.key.is_empty() && wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
                     let key = self.plan.key.clone();
                     // shortcut: a failed portal request is only logged; the app shows nothing.
                     std::thread::spawn(move || match plan::portal_url(&key) {
@@ -1121,15 +1219,37 @@ impl App {
             } else {
                 ui.columns(2, |cols| {
                     for (col, yearly) in cols.iter_mut().zip([false, true]) {
-                        let label = if yearly { t("Yıllık", "Yearly", "Anual") } else { t("Aylık", "Monthly", "Mensual") };
-                        if col.add_sized([col.available_width(), 42.0], egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(10)).clicked()
-                            && let Some(url) = plan::buy_url(&self.telemetry.install_id, yearly)
-                        {
-                            open_url(&url);
-                            self.pro_waiting = Some(ctx.input(|i| i.time));
+                        // The App Store shows its own localized price; the website build shows the Paddle price.
+                        let (store_m, store_y) = (self.store_prices.0.as_deref().unwrap_or("…"), self.store_prices.1.as_deref().unwrap_or("…"));
+                        let label = if yearly {
+                            tf!("{} / yıl", "{} / year", "{} / año", if APPSTORE { store_y } else { plan::PRICE_YEARLY })
+                        } else {
+                            tf!("{} / ay", "{} / month", "{} / mes", if APPSTORE { store_m } else { plan::PRICE_MONTHLY })
+                        };
+                        let button = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(10);
+                        if col.add_enabled(!self.store_busy, button.min_size(vec2(col.available_width(), 42.0))).clicked() {
+                            self.pro_error.clear();
+                            if APPSTORE {
+                                self.store_busy = true;
+                                store_buy(yearly);
+                            } else if let Some(url) = plan::buy_url(&self.telemetry.install_id, yearly) {
+                                open_url(&url);
+                                self.pro_waiting = Some(ctx.input(|i| i.time));
+                            }
                         }
+                        col.vertical_centered(|ui| {
+                            let note = if yearly { t("%17 tasarruf", "save 17%", "ahorre 17 %") } else { t("istediğiniz zaman iptal", "cancel anytime", "cancele cuando quiera") };
+                            ui.label(RichText::new(note).small().color(if yearly { Color32::from_rgb(245, 184, 46) } else { muted }));
+                        });
                     }
                 });
+                if self.store_busy {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(RichText::new(t("App Store bekleniyor…", "Waiting for the App Store…", "Esperando al App Store…")).color(muted));
+                    });
+                }
                 if self.pro_waiting.is_some() {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -1142,6 +1262,9 @@ impl App {
                     });
                 }
                 ui.add_space(12.0);
+                if APPSTORE {
+                    self.store_terms(ui, muted);
+                } else {
                 ui.label(RichText::new(t("Lisans anahtarınız var mı?", "Have a license key?", "¿Tiene una clave de licencia?")).strong());
                 ui.horizontal(|ui| {
                     let busy = self.pro_check.is_some() && self.pro_manual;
@@ -1155,6 +1278,7 @@ impl App {
                         ui.add(egui::Spinner::new());
                     }
                 });
+                }
                 if !self.pro_error.is_empty() {
                     ui.label(RichText::new(&self.pro_error).color(DANGER));
                 }
@@ -1170,7 +1294,78 @@ impl App {
         }
     }
 
+    /// What Apple requires next to a subscription offer: renewal terms, restore, Terms of Use and privacy policy.
+    fn store_terms(&mut self, ui: &mut Ui, muted: Color32) {
+        if ui.add_enabled(!self.store_busy, egui::Button::new(t("Satın alımları geri yükle", "Restore purchases", "Restaurar compras"))).clicked() {
+            self.pro_error.clear();
+            store_restore();
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new(t(
+            "deskMonk Pro otomatik yenilenen bir aboneliktir (aylık veya yıllık). Ödeme Apple Hesabınızdan alınır. Dönem bitmeden en az 24 saat önce iptal edilmezse kendiliğinden yenilenir; App Store hesap ayarlarınızdan yönetebilir veya iptal edebilirsiniz.",
+            "deskMonk Pro is an auto-renewing subscription (monthly or yearly). Payment is charged to your Apple Account. It renews automatically unless cancelled at least 24 hours before the end of the period; manage or cancel it in your App Store account settings.",
+            "deskMonk Pro es una suscripción de renovación automática (mensual o anual). El pago se carga a su cuenta de Apple. Se renueva automáticamente salvo que se cancele al menos 24 horas antes del final del periodo; gestiónela o cancélela en los ajustes de su cuenta del App Store.",
+        )).small().color(muted));
+        ui.horizontal(|ui| {
+            ui.hyperlink_to(RichText::new(t("Kullanım Koşulları (EULA)", "Terms of Use (EULA)", "Términos de uso (EULA)")).small(), APPLE_EULA);
+            ui.label(RichText::new("·").small().color(muted));
+            ui.hyperlink_to(RichText::new(t("Gizlilik Politikası", "Privacy Policy", "Política de privacidad")).small(), PRIVACY_POLICY);
+        });
+    }
+
+    /// Password pop-up for a vault clicked in the list; closes by itself once the vault is open.
+    fn vault_unlock_dialog(&mut self, ctx: &egui::Context) {
+        let Some(target) = self.vault_target.clone() else {
+            self.vault_prompt = false;
+            return;
+        };
+        let name = target.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let shown = name.strip_suffix(&format!(".{}", vault::EXT)).unwrap_or(&name).to_string();
+        let icon = self.icons.get(ctx, &target);
+        let mut cancel = false;
+        egui::Modal::new(egui::Id::new("vault_unlock")).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(Margin::same(28))).show(ctx, |ui| {
+            ui.set_width(320.0);
+            form_header(ui, Some((icon, &shown)), &shown, t("Açmak için kasanın şifresini girin", "Enter the vault's password to open it", "Escriba la contraseña de la caja fuerte para abrirla"));
+            if let Some((_, done, total)) = &self.vault_job {
+                let total = total.load(Ordering::Relaxed);
+                let frac = if total == 0 { 0.0 } else { (done.load(Ordering::Relaxed) as f32 / total as f32).min(1.0) };
+                ui.vertical_centered(|ui| {
+                    ui.add(egui::Spinner::new().size(28.0));
+                    ui.label(t("Açılıyor…", "Opening…", "Abriendo…"));
+                });
+                ui.add(egui::ProgressBar::new(frac).show_percentage());
+                return;
+            }
+            let wrong = !self.vault_error.is_empty();
+            pw_field(ui, &mut self.vault_pw, t("Kasa şifresi", "Vault password", "Contraseña de la caja fuerte"), wrong).request_focus();
+            if wrong {
+                ui.label(RichText::new(&self.vault_error).color(DANGER));
+            }
+            ui.add_space(6.0);
+            // The field keeps focus every frame, so Enter is read directly rather than via lost_focus.
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (wide_button(ui, t("🔓  Kilidi aç", "🔓  Unlock", "🔓  Desbloquear"), Some(ACCENT)) || enter) && !self.vault_pw.is_empty() {
+                self.start_vault(ctx.clone());
+            }
+            cancel = wide_button(ui, t("Vazgeç", "Cancel", "Cancelar"), None);
+        });
+        // Escape or a click outside cancels too, but not while the vault is being opened.
+        if self.vault_job.is_none() && (cancel || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
+            self.vault_prompt = false;
+            self.vault_target = None;
+            self.vault_pw.clear();
+            self.vault_error.clear();
+        }
+    }
+
     fn vault_pick(&mut self, path: PathBuf) {
+        // A vault dropped or chosen by hand joins the list, e.g. one made before the list existed.
+        if vault::is_vault(&path) && !self.vaults.contains(&path) {
+            self.vaults.insert(0, path.clone());
+            if let Err(e) = vault::save_list(&self.vaults) {
+                eprintln!("could not save the vault list: {e}");
+            }
+        }
         self.vault_target = Some(path);
         self.vault_pw.clear();
         self.vault_pw2.clear();
@@ -1198,7 +1393,7 @@ impl App {
                 vault::encrypt(&src, &password, &d)
             };
             // The vault replaces the readable copy, and the opened copy replaces the vault; the Trash keeps either recoverable.
-            let _ = tx.send(result.map(|out| (out, trash::delete(&src).err().map(|e| e.to_string()))));
+            let _ = tx.send(result.map(|out| (out, deskmonk::to_trash(&src).err().map(|e| e.to_string()))));
             ctx.request_repaint();
         });
         self.vault_job = Some((rx, done, total));
@@ -1265,7 +1460,7 @@ impl App {
                     ui.add_space(8.0);
                     ui.add(egui::ProgressBar::new(frac).show_percentage());
                 });
-            } else if let Some(target) = self.vault_target.clone() {
+            } else if let Some(target) = self.vault_target.clone().filter(|_| !self.vault_prompt) {
                 let encrypting = !vault::is_vault(&target);
                 let name = target.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let icon = self.icons.get(ui.ctx(), &target);
@@ -1301,7 +1496,7 @@ impl App {
                     }
                     if left == Some(0) {
                         if wide_button(ui, t("⭐  Pro ile sınırsız şifrele", "⭐  Encrypt without limits with Pro", "⭐  Cifre sin límites con Pro"), Some(ACCENT)) {
-                            self.pro_open = true;
+                            self.open_pro("vault_limit");
                         }
                     } else if wide_button(ui, action, Some(ACCENT)) || enter {
                         if encrypting && self.vault_pw.chars().count() < 4 {
@@ -1328,16 +1523,21 @@ impl App {
                 });
             } else {
                 let hovering = ui.input(|i| !i.raw.hovered_files.is_empty());
-                let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 210.0), Sense::hover());
+                // Smaller once there are vaults, so their list shows without scrolling.
+                let compact = !self.vaults.is_empty();
+                let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), if compact { 110.0 } else { 210.0 }), Sense::hover());
                 let p = ui.painter();
                 let stroke = if hovering { ACCENT } else { border };
                 p.rect(rect.shrink(4.0), 14.0, ACCENT.gamma_multiply(if hovering { 0.14 } else { 0.05 }), Stroke::new(1.5, stroke), egui::StrokeKind::Inside);
-                let c = rect.center() - vec2(0.0, 38.0);
-                p.circle(c, 34.0, ACCENT.gamma_multiply(0.16), Stroke::new(1.5, ACCENT.gamma_multiply(0.45)));
-                paint_lock(p, c, 34.0, ACCENT, ui.visuals().panel_fill);
+                let text_y = if compact { -12.0 } else { 22.0 };
+                if !compact {
+                    let c = rect.center() - vec2(0.0, 38.0);
+                    p.circle(c, 34.0, ACCENT.gamma_multiply(0.16), Stroke::new(1.5, ACCENT.gamma_multiply(0.45)));
+                    paint_lock(p, c, 34.0, ACCENT, ui.visuals().panel_fill);
+                }
                 let strong = ui.visuals().strong_text_color();
-                p.text(rect.center() + vec2(0.0, 22.0), Align2::CENTER_CENTER, t("Dosya ya da klasörü buraya bırakın", "Drop a file or folder here", "Suelte aquí un archivo o una carpeta"), FontId::proportional(17.0), strong);
-                p.text(rect.center() + vec2(0.0, 48.0), Align2::CENTER_CENTER, tf!("Açmak için bir .{} kasası da bırakabilirsiniz", "or a .{} vault to open it", "o una caja fuerte .{} para abrirla", vault::EXT), FontId::proportional(13.0), muted);
+                p.text(rect.center() + vec2(0.0, text_y), Align2::CENTER_CENTER, t("Dosya ya da klasörü buraya bırakın", "Drop a file or folder here", "Suelte aquí un archivo o una carpeta"), FontId::proportional(17.0), strong);
+                p.text(rect.center() + vec2(0.0, text_y + 26.0), Align2::CENTER_CENTER, tf!("Açmak için bir .{} kasası da bırakabilirsiniz", "or a .{} vault to open it", "o una caja fuerte .{} para abrirla", vault::EXT), FontId::proportional(13.0), muted);
                 ui.add_space(10.0);
                 centered_column(ui, 340.0, |ui| {
                     ui.columns(2, |cols| {
@@ -1356,6 +1556,91 @@ impl App {
             }
             ui.add_space(10.0);
         });
+        if !self.vaults.is_empty() {
+            ui.add_space(18.0);
+            ui.label(RichText::new(t("Kasalarınız", "Your vaults", "Sus cajas fuertes")).size(16.0).strong());
+            ui.label(RichText::new(t(
+                "Burada şifrelediğiniz her şey. Geri açmak için Aç'a basıp şifreyi girin.",
+                "Everything you encrypted here. Click Open and enter the password to get it back.",
+                "Todo lo que cifró aquí. Pulse Abrir y escriba la contraseña para recuperarlo.",
+            )).color(muted));
+            ui.add_space(8.0);
+            let idle = self.vault_job.is_none();
+            let mut forget = None;
+            for path in self.vaults.clone() {
+                let meta = std::fs::metadata(&path).ok();
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let shown = name.strip_suffix(&format!(".{}", vault::EXT)).unwrap_or(&name).to_string();
+                let icon = self.icons.get(ui.ctx(), &path);
+                // The whole row is clickable; it is allocated before its buttons, so they keep their own clicks.
+                let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 68.0), if idle && meta.is_some() { Sense::click() } else { Sense::hover() });
+                let hovered = resp.hovered() && idle && meta.is_some();
+                let (_, card_fill, border, _) = palette(ui.visuals().dark_mode);
+                ui.painter().rect(
+                    row,
+                    12.0,
+                    if hovered { ui.visuals().widgets.hovered.weak_bg_fill } else { card_fill },
+                    Stroke::new(1.0, if hovered { ACCENT } else { border }),
+                    egui::StrokeKind::Inside,
+                );
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.vault_pick(path.clone());
+                    self.vault_prompt = true;
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink2(vec2(14.0, 12.0))), |ui| {
+                    ui.horizontal_centered(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+                        paint_icon(ui, rect, icon, &shown);
+                        let badge = rect.right_bottom() - vec2(3.0, 3.0);
+                        ui.painter().circle(badge, 9.0, ACCENT, Stroke::new(2.0, ui.visuals().panel_fill));
+                        paint_lock(ui.painter(), badge, 11.0, Color32::WHITE, ACCENT);
+                        ui.add_space(6.0);
+                        // Leaves room for the buttons on the right; longer text is cut with "…".
+                        let text_w = (ui.available_width() - 250.0).max(80.0);
+                        ui.vertical(|ui| {
+                            ui.set_max_width(text_w);
+                            ui.add(egui::Label::new(RichText::new(&shown).size(15.0).strong()).truncate());
+                            let folder = path.parent().unwrap_or(&path);
+                            let folder = match dirs::home_dir().and_then(|h| folder.strip_prefix(h).ok().map(Path::to_path_buf)) {
+                                Some(rel) => format!("~/{}", rel.display()),
+                                None => folder.display().to_string(),
+                            };
+                            let detail = match &meta {
+                                Some(m) => format!("{folder} · {}", human_size(m.len())),
+                                None => folder,
+                            };
+                            ui.add(egui::Label::new(RichText::new(detail).small().color(muted)).truncate());
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_enabled_ui(idle, |ui| {
+                                if meta.is_some() {
+                                    let open = egui::Button::new(RichText::new(t("🔓  Aç", "🔓  Open", "🔓  Abrir")).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(8);
+                                    if ui.add(open).clicked() {
+                                        self.vault_pick(path.clone());
+                                        self.vault_prompt = true;
+                                    }
+                                    if ui.button(reveal_label()).clicked() {
+                                        reveal_in_folder(&path);
+                                    }
+                                } else {
+                                    if ui.button(t("Listeden kaldır", "Remove from list", "Quitar de la lista")).clicked() {
+                                        forget = Some(path.clone());
+                                    }
+                                    ui.label(RichText::new(t("Bulunamadı", "Not found", "No encontrado")).color(DANGER));
+                                }
+                            });
+                        });
+                    });
+                });
+                ui.add_space(6.0);
+            }
+            if let Some(path) = forget {
+                self.vaults.retain(|v| *v != path);
+                if let Err(e) = vault::save_list(&self.vaults) {
+                    eprintln!("could not save the vault list: {e}");
+                }
+            }
+        }
     }
 
     fn monk_view(&mut self, ui: &mut Ui) {
@@ -1542,7 +1827,7 @@ impl App {
                                     self.lock.apps.push(app);
                                     changed = true;
                                 } else {
-                                    self.pro_open = true;
+                                    self.open_pro("applock_limit");
                                 }
                             }
                         }
@@ -1613,7 +1898,7 @@ impl App {
                         self.lock.apps.push(app);
                         changed = true;
                     } else {
-                        self.pro_open = true;
+                        self.open_pro("applock_limit");
                     }
                 }
             });
@@ -1891,8 +2176,16 @@ impl eframe::App for App {
             let encrypted = self.vault_target.as_deref().is_some_and(|p| !vault::is_vault(p));
             match result {
                 Ok((out, trash_error)) => {
+                    self.telemetry.used("gui", "vault", if encrypted { "encrypt" } else { "open" });
                     if encrypted {
                         self.plan.record_vault();
+                        self.vaults.retain(|v| *v != out);
+                        self.vaults.insert(0, out.clone());
+                    } else if let Some(src) = &self.vault_target {
+                        self.vaults.retain(|v| v != src);
+                    }
+                    if let Err(e) = vault::save_list(&self.vaults) {
+                        eprintln!("could not save the vault list: {e}");
                     }
                     self.vault_done = Some((out, encrypted, trash_error));
                     self.vault_target = None;
@@ -1955,7 +2248,7 @@ impl eframe::App for App {
                             egui::Button::new(RichText::new(t("⭐ Pro'ya geç", "⭐ Get Pro", "⭐ Pasar a Pro")).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(8)
                         };
                         if ui.add(pro_button).clicked() {
-                            self.pro_open = true;
+                            self.open_pro("button");
                         }
                         ui.add_space(8.0);
                         ui.label(
@@ -2010,6 +2303,9 @@ impl eframe::App for App {
         if self.pro_open {
             self.pro_dialog(&ctx);
         }
+        if self.vault_prompt {
+            self.vault_unlock_dialog(&ctx);
+        }
         if self.confirm {
             let (n, size) = self.totals(None, true);
             let clean_left = self.plan.clean_left();
@@ -2050,7 +2346,7 @@ impl eframe::App for App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if over_limit {
                         if ui.add(egui::Button::new(RichText::new(t("⭐  Pro'ya geç", "⭐  Get Pro", "⭐  Pasar a Pro")).strong().color(Color32::WHITE)).fill(ACCENT)).clicked() {
-                            self.pro_open = true;
+                            self.open_pro("clean_limit");
                             self.confirm = false;
                         }
                     } else if ui.add(egui::Button::new(RichText::new(t("Temizle", "Clean", "Limpiar")).strong().color(Color32::WHITE)).fill(DANGER)).clicked() {
@@ -2345,11 +2641,15 @@ fn paint_monk(p: &egui::Painter, rect: Rect, sit: f32, t: f32, alive: bool) {
 
 /// System notification when a focus or break ends; best effort.
 fn notify(title: &str, body: &str) {
+    // shortcut: the sandboxed App Store build gets no notification banner (UNUserNotificationCenter would add it);
+    // the Dock icon still bounces.
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("osascript")
+    if !deskmonk::sandboxed() {
+        let _ = std::process::Command::new("osascript")
         .arg("-e")
-        .arg(format!("display notification {body:?} with title {title:?}"))
-        .spawn();
+            .arg(format!("display notification {body:?} with title {title:?}"))
+            .spawn();
+    }
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("notify-send").args([title, body]).spawn();
     // shortcut: no Windows toast (needs the WinRT API); the Dock/taskbar attention request still fires.
@@ -2796,34 +3096,58 @@ fn reveal_label() -> &'static str {
 }
 
 fn open_url(url: &str) {
-    let result = if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(url).spawn()
-    } else if cfg!(windows) {
-        std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(url).spawn()
-    };
-    if let Err(e) = result {
-        eprintln!("could not open {url}: {e}");
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSString, NSURL};
+        if let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) {
+            objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&url);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let result = if cfg!(windows) {
+            std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn()
+        } else {
+            std::process::Command::new("xdg-open").arg(url).spawn()
+        };
+        if let Err(e) = result {
+            eprintln!("could not open {url}: {e}");
+        }
     }
 }
 
 fn reveal_in_folder(path: &Path) {
-    let result = if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-            .arg("-R")
-            .arg(path)
-            .spawn()
-    } else if cfg!(windows) {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path.display()))
-            .spawn()
-    } else {
-        std::process::Command::new("xdg-open")
-            .arg(path.parent().unwrap_or(path))
-            .spawn()
-    };
-    if let Err(e) = result {
-        eprintln!("could not open folder: {e}");
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSArray, NSString, NSURL};
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        objc2_app_kit::NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let result = if cfg!(windows) {
+            std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn()
+        } else {
+            std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn()
+        };
+        if let Err(e) = result {
+            eprintln!("could not open folder: {e}");
+        }
     }
 }
+
+#[cfg(feature = "appstore")]
+fn store_buy(yearly: bool) {
+    store::buy(yearly);
+}
+
+#[cfg(not(feature = "appstore"))]
+fn store_buy(_: bool) {}
+
+#[cfg(feature = "appstore")]
+fn store_restore() {
+    store::restore();
+}
+
+#[cfg(not(feature = "appstore"))]
+fn store_restore() {}

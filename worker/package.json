@@ -1,10 +1,10 @@
 {
-  "name": "deskmonk-stats",
+  "name": "deskmonk",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "schema:remote": "wrangler d1 execute cleanspace-stats --remote --file=schema.sql",
+    "schema:remote": "wrangler d1 execute deskmonk --remote --file=schema.sql",
     "deploy": "wrangler deploy",
     "test": "vitest run"
   },

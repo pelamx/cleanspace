@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<defs>
+  <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+    <circle cx="11" cy="11" r="5" fill="#4a3fd6"/>
+  </pattern>
+  <radialGradient id="fade" cx="512" cy="430" r="520" gradientUnits="userSpaceOnUse">
+    <stop offset="0.45" stop-color="#000"/><stop offset="1" stop-color="#fff"/>
+  </radialGradient>
+  <mask id="edge"><rect width="1024" height="1024" fill="url(#fade)"/></mask>
+</defs>
+<g clip-path="url(#sq)">
+  <rect width="1024" height="1024" fill="#6c63ff"/>
+  <path fill="#8178ff" d="M512 430 L1412 430 L1398 586Z M512 430 L1358 738 L1291 880Z M512 430 L1201 1009 L1091 1119Z M512 430 L962 1209 L820 1276Z M512 430 L668 1316 L512 1330Z M512 430 L356 1316 L204 1276Z M512 430 L62 1209 L-67 1119Z M512 430 L-177 1009 L-267 880Z M512 430 L-334 738 L-374 586Z M512 430 L-388 430 L-374 274Z M512 430 L-334 122 L-267 -20Z M512 430 L-177 -149 L-67 -259Z M512 430 L62 -349 L204 -416Z M512 430 L356 -456 L512 -470Z M512 430 L668 -456 L820 -416Z M512 430 L962 -349 L1091 -259Z M512 430 L1201 -149 L1291 -20Z M512 430 L1358 122 L1398 274Z"/>
+  <rect width="1024" height="1024" fill="url(#dots)" mask="url(#edge)"/>
+  <ellipse cx="512" cy="862" rx="330" ry="22" fill="#000" opacity=".25"/>
+</g>
+<g stroke="#1b1530" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+  <!-- torso -->
+  <path fill="#f28c28" d="M420 420 C378 440 362 520 368 610 L656 610 C662 520 646 440 604 420 Z"/>
+  <path fill="#c8401f" d="M436 424 L492 426 L652 572 L654 610 L606 610 Z"/>
+  <!-- crossed legs -->
+  <path fill="#f28c28" d="M318 648 C312 584 400 556 512 572 C624 556 712 584 706 648 Z"/>
+  <path fill="none" stroke-width="10" d="M470 604 C440 614 410 618 372 616 M554 604 C584 614 614 618 652 616"/>
+  <!-- hands in lap -->
+  <ellipse cx="512" cy="586" rx="58" ry="28" fill="#f5c99b"/>
+  <path fill="none" stroke-width="8" d="M478 586 Q512 600 546 586"/>
+  <!-- head -->
+  <circle cx="417" cy="342" r="24" fill="#f5c99b"/>
+  <circle cx="607" cy="342" r="24" fill="#f5c99b"/>
+  <circle cx="512" cy="330" r="100" fill="#f5c99b"/>
+  <path fill="none" stroke-width="10" d="M455 340 Q474 358 493 340 M531 340 Q550 358 569 340 M488 382 Q512 400 536 382"/>
+</g>
+<circle cx="452" cy="372" r="13" fill="#ff8f8f" opacity=".7"/>
+<circle cx="572" cy="372" r="13" fill="#ff8f8f" opacity=".7"/>
+<ellipse cx="470" cy="270" rx="26" ry="14" fill="#fff" opacity=".8" transform="rotate(-30 470 270)"/>
+<g stroke="#1b1530" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+  <!-- desk -->
+  <rect x="240" y="636" width="544" height="50" rx="10" fill="#c0703a"/>
+  <rect x="268" y="686" width="488" height="44" fill="#8f4a22"/>
+  <rect x="482" y="700" width="60" height="16" rx="6" fill="#f5c99b"/>
+  <rect x="290" y="730" width="44" height="124" fill="#8f4a22"/>
+  <rect x="690" y="730" width="44" height="124" fill="#8f4a22"/>
+  <!-- tea cup -->
+  <path fill="#fff" d="M712 588 L768 588 L762 636 L718 636 Z"/>
+  <path fill="none" d="M768 600 Q790 606 766 624"/>
+  <path fill="none" stroke-width="9" d="M728 568 Q718 552 730 538 M752 568 Q742 552 754 538"/>
+  <!-- sparkles -->
+  <g stroke-width="10">
+  <path fill="#fff" d="M285 232 Q296.6 278.4 343 290 Q296.6 301.6 285 348 Q273.4 301.6 227 290 Q273.4 278.4 285 232Z"/>
+  <path fill="#fff" d="M745 210 Q753.0 242.0 785 250 Q753.0 258.0 745 290 Q737.0 258.0 705 250 Q737.0 242.0 745 210Z"/>
+  <path fill="#ffd23f" d="M250 490 Q256.0 514.0 280 520 Q256.0 526.0 250 550 Q244.0 526.0 220 520 Q244.0 514.0 250 490Z"/>
+  </g>
+</g>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#1b1530" stroke-width="18"/>
+</svg>

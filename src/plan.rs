@@ -8,10 +8,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// License server base URL, set at build time; without it (dev builds) everything is Pro.
 /// CI passes an unset repository variable as "", which counts as not set.
+/// The Mac App Store build sells Pro through Apple instead (src/store.rs), so it has no license server.
 pub const URL: Option<&str> = match option_env!("DESKMONK_LICENSE_URL") {
-    Some(url) if !url.is_empty() => Some(url),
+    Some(url) if !url.is_empty() && !cfg!(feature = "appstore") => Some(url),
     _ => None,
 };
+
+/// Prices shown in the app; the amounts charged are set on the Paddle prices and must match these.
+pub const PRICE_MONTHLY: &str = "$2.50";
+pub const PRICE_YEARLY: &str = "$25";
 
 pub const FREE_CLEAN: u64 = 2 << 30;
 pub const FREE_VAULTS: u32 = 3;
@@ -65,7 +70,7 @@ impl Plan {
     }
 
     pub fn is_pro(&self) -> bool {
-        URL.is_none() || self.pro_at(now())
+        (URL.is_none() && !cfg!(feature = "appstore")) || self.pro_at(now())
     }
 
     fn pro_at(&self, now: u64) -> bool {

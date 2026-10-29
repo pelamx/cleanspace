@@ -38,6 +38,10 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: packaging/macos.sh
+      # The Mac App Store build (sandbox + StoreKit) must keep compiling and linking; it is uploaded by hand.
+      - run: cargo build --features appstore --bin deskmonk
+        env:
+          CARGO_TARGET_DIR: target/appstore
       - uses: actions/upload-artifact@v4
         with:
           name: macos

@@ -1,93 +1,274 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>deskMonk — Akıllı depolama temizleyici</title>
-<meta name="description" content="Gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur. Silmeden önce ne kadar yer kazanacağını gösterir.">
-<style>
-  :root {
-    --bg: #f7f8fa; --card: #fff; --text: #16181d; --muted: #5b616e;
-    --line: #e3e6ec; --accent: #1f6feb; --accent-text: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #9aa4b2;
-            --line: #272d36; --accent: #4493f8; --accent-text: #06101d; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-  .wrap { max-width: 780px; margin: 0 auto; padding: 48px 20px 64px; }
-  h1 { font-size: 2.4rem; margin: 0 0 .2em; letter-spacing: -.02em; }
-  h1 span { color: var(--muted); font-size: 1rem; font-weight: 400; letter-spacing: 0; }
-  h2 { font-size: 1.15rem; margin: 2.4em 0 .6em; }
-  p.lead { font-size: 1.1rem; color: var(--muted); margin-top: 0; }
-  .dl { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 8px; }
-  a.btn { display: block; padding: 14px 20px; border-radius: 10px; text-decoration: none;
-          border: 1px solid var(--line); background: var(--card); color: var(--text); }
-  a.btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
-  a.btn b { display: block; font-size: 1rem; }
-  a.btn small { opacity: .75; font-size: .82rem; }
-  .note { color: var(--muted); font-size: .9rem; }
-  ul { padding-left: 1.2em; }
-  li { margin: .35em 0; }
-  code { background: var(--card); border: 1px solid var(--line); border-radius: 5px;
-         padding: 1px 5px; font-size: .88em; }
-  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-        padding: 14px 16px; overflow-x: auto; }
-  pre code { border: 0; background: none; padding: 0; }
-  footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line);
-           color: var(--muted); font-size: .9rem; }
-  a { color: var(--accent); }
-</style>
+<title data-i18n="meta.title">deskMonk — Smart solutions for a calm desk</title>
+<meta name="description" data-i18n-content="meta.desc" content="deskMonk frees disk space, locks private files in an encrypted Vault, keeps you focused with Monk mode, maps your disk and shows your hardware. Free for macOS, Windows and Linux.">
+<meta property="og:title" data-i18n-content="meta.title" content="deskMonk — Smart solutions for a calm desk">
+<meta property="og:description" data-i18n-content="meta.desc" content="Free up space, encrypt private files, focus better. One calm app for macOS, Windows and Linux.">
+<meta property="og:image" content="https://deskmonk.app/img/clean.jpg">
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="/site.css">
+<script src="/site.js" defer></script>
 </head>
 <body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/logo.svg" alt="">deskMonk</a>
+  <nav>
+    <a class="hide-s" href="#features" data-i18n="nav.features">Features</a>
+    <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
+    <a class="hide-s" href="#faq" data-i18n="nav.faq">FAQ</a>
+    <a href="#download" data-i18n="nav.download">Download</a>
+    <select class="langs" aria-label="Language"></select>
+  </nav>
+</div></header>
+
 <div class="wrap">
+  <section class="hero">
+    <div>
+      <span class="pill" data-i18n="hero.pill">Free · macOS, Windows, Linux</span>
+      <h1 data-i18n="hero.title">Smart solutions for a <em>calm desk.</em></h1>
+      <p class="lead" data-i18n="hero.lead">deskMonk finds the gigabytes you no longer need, locks your private files in an encrypted Vault and
+        keeps you focused while you work. Six tools, one quiet app, and your files never leave your computer.</p>
+      <div class="btns">
+        <a class="btn primary" id="hero-dl" href="#download"><span data-i18n="hero.download">Download free</span><small id="hero-os"></small></a>
+        <a class="btn" href="#features" data-i18n="hero.tour">See what it does</a>
+      </div>
+      <div class="facts">
+        <span data-i18n="hero.f1">No account</span><span data-i18n="hero.f2">Nothing uploaded</span><span data-i18n="hero.f3">Turkish, English, Spanish</span>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img class="shot" src="/img/clean.jpg" width="1400" height="949" alt="deskMonk showing 856 MB of junk files ready to clean">
+      <img class="mascot" src="/monk.svg" width="610" height="690" alt="">
+    </div>
+  </section>
 
-  <h1>deskMonk <span>by pelamx</span></h1>
-  <p class="lead">Bilgisayardaki gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur.
-  Silmeden önce ne kadar yer kazanacağını gösterir.</p>
-
-  <h2>İndir</h2>
-  <div class="dl">
-    <a class="btn primary" href="downloads/deskmonk-windows-x86_64.zip">
-      <b>Windows (x64)</b><small>ZIP · 6,2 MB · masaüstü + terminal</small></a>
-    <a class="btn" href="https://github.com/pelamx/deskmonk/releases/latest">
-      <b>Linux / macOS</b><small>Sürümler sayfası</small></a>
+  <div class="gains">
+    <div class="gain"><b data-i18n="gain.1t">Gigabytes back</b><span data-i18n="gain.1">Duplicates, junk, old downloads and huge files, found in one scan.</span></div>
+    <div class="gain"><b data-i18n="gain.2t">Private stays private</b><span data-i18n="gain.2">Strong encryption for the files only you should open.</span></div>
+    <div class="gain"><b data-i18n="gain.3t">Deep focus</b><span data-i18n="gain.3">A 25-minute focus timer with a monk who keeps you company.</span></div>
+    <div class="gain"><b data-i18n="gain.4t">Know your machine</b><span data-i18n="gain.4">Every part by brand and model, battery health and disk speed.</span></div>
   </div>
-  <p class="note">ZIP içinden <code>deskmonk.exe</code> dosyasını çalıştırın. İmzalanmamış olduğu için
-  Windows SmartScreen uyarı verebilir: <em>Ek bilgi → Yine de çalıştır</em>.</p>
 
-  <h2>Ne bulur</h2>
-  <ul>
-    <li><b>Kopyalar</b> — aynı boyut, aynı ilk 4 KB ve aynı SHA-256 içerik. 64 KB altı dosyalara bakmaz.</li>
-    <li><b>Gereksiz dosyalar</b> — <code>.tmp .bak .old .log .part</code>, <code>Thumbs.db</code>, <code>.DS_Store</code> ve benzerleri.</li>
-    <li><b>Eski indirmeler</b> — İndirilenler klasöründe 90 günden eski dosyalar.</li>
-    <li><b>Büyük dosyalar</b> — 500 MB ve üzeri.</li>
-  </ul>
-  <p>Seçtiğiniz klasörün yanı sıra İndirilenler ve sistem geçici klasörü her taramaya dahildir.
-  Her dosya tek bir kategoride sayılır, sembolik linkler takip edilmez.</p>
+  <section class="block center" id="features">
+    <span class="eyebrow" data-i18n="feat.eyebrow">What deskMonk does</span>
+    <h2 class="big" data-i18n="feat.title">Everything your computer needs, in one calm place</h2>
+    <p class="lead" data-i18n="feat.lead">Instead of a cleaner, an encryption tool, a focus timer and a system profiler, you get one app that does all four, and does them without fuss.</p>
+  </section>
 
-  <h2>Güvenlik</h2>
-  <ul>
-    <li>Masaüstü uygulaması dosyaları <b>çöp kutusuna</b> taşır, kalıcı silmez.</li>
-    <li>Hiçbir kopya önceden seçili gelmez — aynı içerikli dosyalar çoğu zaman programların kendi dosyalarıdır.</li>
-    <li>Kullanım istatistikleri varsayılan olarak kapalıdır; açıksa bile dosya adı veya yolu gönderilmez.</li>
-  </ul>
+  <div class="feature">
+    <img class="shot" src="/img/clean.jpg" width="1400" height="949" loading="lazy" alt="Clean: duplicates, junk files, old downloads and large files">
+    <div>
+      <span class="eyebrow" data-i18n="clean.eyebrow">Clean</span>
+      <h3 data-i18n="clean.title">Free up space without the fear of deleting the wrong file</h3>
+      <p data-i18n="clean.p">Pick a folder or your whole home and press Scan. deskMonk sorts what it finds into four clear groups and shows how much space
+        each one gives back, before anything is touched.</p>
+      <ul>
+        <li data-i18n="clean.l1"><b>Duplicates</b>: true copies only, matched byte for byte, so a file that merely has the same name is never flagged.</li>
+        <li data-i18n="clean.l2"><b>Junk files</b>: app caches, the trash, temporary files, logs and old backups. Caches rebuild themselves when needed.</li>
+        <li data-i18n="clean.l3"><b>Old downloads</b>: installers and files in Downloads you haven't touched for 90 days.</li>
+        <li data-i18n="clean.l4"><b>Large files</b>: anything over 500 MB, the usual reason a disk is suddenly full.</li>
+        <li data-i18n="clean.l5">You choose what goes. Everything except junk is moved to the Trash, so you can still change your mind.</li>
+      </ul>
+      <p class="free" data-i18n="clean.free">Free: clean up to 2 GB a day. Pro: unlimited.</p>
+    </div>
+  </div>
 
-  <h2>Sunucu / terminal</h2>
-  <p>GUI'siz makineler için terminal arayüzü: <code>deskmonk-tui</code>.
-  <code>d</code> çöpe taşır, <code>D</code> kalıcı siler (sunucularda çöp kutusu yer açmaz).</p>
+  <div class="feature">
+    <img class="shot" src="/img/vault.jpg" width="1400" height="949" loading="lazy" alt="Vault: encrypted files and folders">
+    <div>
+      <span class="eyebrow" data-i18n="vault.eyebrow">Vault</span>
+      <h3 data-i18n="vault.title">Lock away your private files with one password</h3>
+      <p data-i18n="vault.p">Drop a file or a whole folder, choose a password, done. Your tax returns, passport scans and contracts become a single
+        encrypted <code>.dmvault</code> file that nobody can open without the password.</p>
+      <ul>
+        <li data-i18n="vault.l1">Strong, modern encryption (ChaCha20-Poly1305 with an Argon2id password key), the kind password managers use.</li>
+        <li data-i18n="vault.l2">All your vaults are listed in one place. Click Open, type the password, and your files are back.</li>
+        <li data-i18n="vault.l3">Safe to keep in Dropbox, iCloud, Google Drive or on a USB stick: the cloud only ever sees scrambled data.</li>
+        <li data-i18n="vault.l4">Opening your vaults is always free, on any plan, forever.</li>
+      </ul>
+      <p class="free" data-i18n="vault.free">Free: 3 encryptions a day, up to 200 MB each. Pro: unlimited, any size.</p>
+    </div>
+  </div>
 
-  <h2>Kaynaktan derleme</h2>
-  <pre><code>git clone https://github.com/pelamx/deskmonk
-cd deskmonk
-cargo build --release</code></pre>
+  <div class="feature">
+    <img class="shot" src="/img/monk.jpg" width="1400" height="949" loading="lazy" alt="Monk mode: a pomodoro focus timer with a meditating monk">
+    <div>
+      <span class="eyebrow" data-i18n="monk.eyebrow">Monk mode</span>
+      <h3 data-i18n="monk.title">Focus like a monk, rest like one too</h3>
+      <p data-i18n="monk.p">A pomodoro timer with a friend. Press Start and the monk sits down to meditate while you work for 25 minutes; when it's
+        time for a break, he stands up and stretches, and so should you.</p>
+      <ul>
+        <li data-i18n="monk.l1">Focus and break lengths you can set to fit how you work.</li>
+        <li data-i18n="monk.l2">A gentle notification when a session ends, so you can stop watching the clock.</li>
+        <li data-i18n="monk.l3">Counts your sessions, so you can see how much deep work you did today.</li>
+      </ul>
+      <p class="free" data-i18n="monk.free">Free on every plan.</p>
+    </div>
+  </div>
 
-  <footer>
-    Kaynak kodu ve sürümler: <a href="https://github.com/pelamx/deskmonk">github.com/pelamx/deskmonk</a>
-  </footer>
+  <div class="feature">
+    <img class="shot" src="/img/map.jpg" width="1400" height="949" loading="lazy" alt="Disk map: a treemap of folder sizes">
+    <div>
+      <span class="eyebrow" data-i18n="map.eyebrow">Disk map</span>
+      <h3 data-i18n="map.title">See where your disk space went, at a glance</h3>
+      <p data-i18n="map.p">Every folder is drawn as a box sized by how much it holds. The biggest boxes are where your space went; click one to step
+        inside, or open it in Finder or Explorer.</p>
+      <ul>
+        <li data-i18n="map.l1">How full your disk is: used, total and free.</li>
+        <li data-i18n="map.l2">Finds the forgotten video project or the 40 GB of old phone backups in seconds.</li>
+      </ul>
+      <p class="free" data-i18n="map.free">Free on every plan.</p>
+    </div>
+  </div>
 
+  <div class="feature">
+    <img class="shot" src="/img/hw.jpg" width="1400" height="949" loading="lazy" alt="Hardware: every component with its brand, plus a disk speed test">
+    <div>
+      <span class="eyebrow" data-i18n="hw.eyebrow">Hardware</span>
+      <h3 data-i18n="hw.title">Know exactly what is inside your computer</h3>
+      <p data-i18n="hw.p">Processor, memory, graphics, display, storage and battery, each with its brand and model, on one screen. Handy when you
+        sell a laptop, buy a used one, or a support desk asks what you have.</p>
+      <ul>
+        <li data-i18n="hw.l1">Battery health and charge cycles: know when a battery is wearing out.</li>
+        <li data-i18n="hw.l2">Disk speed test: real read and write speed of your drive in MB/s.</li>
+        <li data-i18n="hw.l3">Memory maker, core counts, screen resolution and refresh rate, uptime.</li>
+      </ul>
+      <p class="free" data-i18n="hw.free">Free on every plan.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <img class="shot" src="/img/lock.jpg" width="1400" height="949" loading="lazy" alt="App lock: a password in front of chosen apps">
+    <div>
+      <span class="eyebrow" data-i18n="lock.eyebrow">App lock · macOS</span>
+      <h3 data-i18n="lock.title">Keep curious eyes out of your apps</h3>
+      <p data-i18n="lock.p">Choose apps like Messages, Photos or WhatsApp. When someone opens one, deskMonk stops it and asks for your password;
+        with the right password the app opens, and it locks again when it quits.</p>
+      <ul>
+        <li data-i18n="lock.l1">Ideal for a shared family Mac or a laptop you hand to someone for a minute.</li>
+        <li data-i18n="lock.l2">One password for all locked apps.</li>
+      </ul>
+      <p class="free" data-i18n="lock.free">Free: lock 1 app. Pro: lock as many as you like.</p>
+    </div>
+  </div>
+
+  <section class="block center" id="privacy">
+    <span class="eyebrow" data-i18n="priv.eyebrow">Private by design</span>
+    <h2 class="big" data-i18n="priv.title">Your files are none of our business</h2>
+    <div class="cards" style="text-align:start">
+      <div class="card"><div class="icon">🏠</div><h3 data-i18n="priv.1t">Everything happens on your computer</h3>
+        <p data-i18n="priv.1">Scanning, cleaning and encryption run locally. No file, file name or password is ever sent anywhere.</p></div>
+      <div class="card"><div class="icon">🙋</div><h3 data-i18n="priv.2t">No account, no sign-up</h3>
+        <p data-i18n="priv.2">Download and use it. Pro is a license key, not an account.</p></div>
+      <div class="card"><div class="icon">📊</div><h3 data-i18n="priv.3t">Statistics only if you say yes</h3>
+        <p data-i18n="priv.3">Anonymous counts (how much was found, which features are used), never contents. Off unless you allow it.</p></div>
+    </div>
+    <p class="note" style="margin-top:16px"><a href="/privacy" data-i18n="priv.link">Read the privacy policy →</a></p>
+  </section>
+
+  <section class="block center" id="pricing">
+    <span class="eyebrow" data-i18n="price.eyebrow">Pricing</span>
+    <h2 class="big" data-i18n="price.title">Free every day. Pro when you want no limits.</h2>
+    <p class="lead" data-i18n="price.lead">Every feature is in the free plan. Pro removes the daily limits, on up to 3 of your computers.</p>
+    <span id="cycle-words" hidden><span data-price="monthly">$2.50</span><span data-i18n="price.permonth">/ month</span><span data-i18n="price.monthnote">Cancel anytime</span></span>
+    <div class="cycle" role="group">
+      <button type="button" data-cycle="monthly" data-i18n="price.monthly">Monthly</button>
+      <button type="button" data-cycle="yearly" class="on"><span data-i18n="price.yearly">Yearly</span> <b data-i18n="price.save">−17%</b></button>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <div class="name" data-i18n="price.free">Free</div>
+        <div class="price" data-price="free">$0</div>
+        <div class="sub" data-i18n="price.forever">forever</div>
+        <ul>
+          <li data-i18n="price.f1">Scan, disk map, hardware and speed test</li>
+          <li data-i18n="price.f2">Clean up to <b>2 GB a day</b></li>
+          <li data-i18n="price.f3">Vault: <b>3</b> encryptions a day, up to <b>200 MB</b> each</li>
+          <li data-i18n="price.f4">Opening vaults: always free</li>
+          <li data-i18n="price.f5">Monk mode focus timer</li>
+          <li data-i18n="price.f6">App lock for <b>1</b> app</li>
+        </ul>
+        <div class="btns"><a class="btn" href="#download" data-i18n="price.dl">Download</a></div>
+      </div>
+      <div class="plan pro">
+        <div class="name">deskMonk Pro</div>
+        <div class="price" id="pro-price"><span data-price="yearly">$25</span> <small data-i18n="price.peryear">/ year</small></div>
+        <div class="sub" id="pro-sub" data-i18n="price.yearnote">$2.08 a month, billed yearly</div>
+        <ul>
+          <li data-i18n="price.p1">Everything in Free</li>
+          <li data-i18n="price.p2"><b>Unlimited</b> cleaning</li>
+          <li data-i18n="price.p3"><b>Unlimited</b> Vault encryptions, any size</li>
+          <li data-i18n="price.p4">Lock <b>any number</b> of apps</li>
+          <li data-i18n="price.p5">One license for <b>up to 3 computers</b></li>
+          <li data-i18n="price.p6">Cancel anytime · 14-day refund</li>
+        </ul>
+        <div class="btns"><a class="btn primary" id="pro-buy" href="/buy?plan=yearly" data-i18n="price.buy">Get Pro</a></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:16px" data-i18n="price.note">Prices in USD; Paddle shows your local currency and any tax before you pay.</p>
+  </section>
+
+  <section class="block" id="download">
+    <div class="center">
+      <span class="eyebrow" data-i18n="dl.eyebrow">Download</span>
+      <h2 class="big" data-i18n="dl.title">Get deskMonk free</h2>
+    </div>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <h3>macOS</h3>
+        <p data-i18n="dl.mac">Apple Silicon and Intel, macOS 10.13 or later. If macOS blocks the first launch, open System Settings → Privacy &amp; Security → Open Anyway.</p>
+        <a class="btn primary" href="/downloads/deskMonk-0.3.0-macos.dmg"><span data-i18n="dl.get">Download</span><small>DMG · 15 MB</small></a>
+      </div>
+      <div class="dl" data-os="win">
+        <h3>Windows</h3>
+        <p data-i18n="dl.win">Windows 10 and 11, 64-bit. Unzip and run. If SmartScreen warns about a new app, choose More info → Run anyway.</p>
+        <a class="btn primary" href="/downloads/deskmonk-windows-x86_64.zip"><span data-i18n="dl.get">Download</span><small>ZIP · 8 MB</small></a>
+      </div>
+      <div class="dl" data-os="linux">
+        <h3>Linux</h3>
+        <p data-i18n="dl.linux">AppImage and tar.gz for x86_64 and ARM, plus <code>deskmonk-tui</code>, a terminal version for servers without a desktop.</p>
+        <a class="btn" href="https://github.com/pelamx/deskmonk/releases/latest"><span data-i18n="dl.github">On GitHub</span><small>AppImage · tar.gz</small></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="faq">
+    <div class="center">
+      <span class="eyebrow">FAQ</span>
+      <h2 class="big" data-i18n="faq.title">Questions, answered</h2>
+    </div>
+    <div class="faq">
+      <details><summary data-i18n="faq.q1">Can deskMonk delete something important?</summary>
+        <p data-i18n="faq.a1">Nothing is deleted until you press Clean, and you see every file first. Everything except junk goes to the Trash, so you can put it back. Junk means caches, temporary files and logs that apps recreate on their own.</p></details>
+      <details><summary data-i18n="faq.q2">What if I forget a Vault password?</summary>
+        <p data-i18n="faq.a2">Then the vault can't be opened, not by you and not by us. That is what makes it safe. Write the password down somewhere safe.</p></details>
+      <details><summary data-i18n="faq.q3">Is the free plan really free?</summary>
+        <p data-i18n="faq.a3">Yes. No trial period, no card, no account. The free plan has every feature with small daily limits; most people never need more.</p></details>
+      <details><summary data-i18n="faq.q4">How does Pro work on several computers?</summary>
+        <p data-i18n="faq.a4">After buying you get a license key. Enter it in deskMonk under ⭐ Pro → "Have a license key?" on up to 3 computers. Bought from inside the app, that computer turns Pro by itself.</p></details>
+      <details><summary data-i18n="faq.q5">How do I cancel, or get a refund?</summary>
+        <p data-i18n="faq.a5">Cancel anytime from deskMonk (⭐ Pro → Manage subscription) or on your account page; you keep Pro until the end of the paid period. Within 14 days of paying you get a full refund, no questions asked.</p></details>
+      <details><summary data-i18n="faq.q6">Who handles the payment?</summary>
+        <p data-i18n="faq.a6">Paddle, our merchant of record. It processes the card, handles tax for your country and sends your receipt. We never see your card details.</p></details>
+    </div>
+  </section>
+
+  <section class="cta">
+    <img class="mascot" src="/monk.svg" width="610" height="690" alt="The deskMonk monk">
+    <h2 class="big" data-i18n="cta.title">Give your computer some calm.</h2>
+    <p class="lead" data-i18n="cta.lead" style="margin:0 auto">Free to download, two minutes to your first clean scan.</p>
+    <div class="btns"><a class="btn primary" href="#download" data-i18n="cta.btn">Download deskMonk</a><a class="btn" href="/buy" data-i18n="cta.pro">Get Pro</a></div>
+  </section>
 </div>
+
+<footer class="site"><div class="wrap">
+  <a href="/#pricing" data-i18n="nav.pricing">Pricing</a><a href="/account" data-i18n="foot.account">My license</a>
+  <a href="/terms" data-i18n="foot.terms">Terms</a><a href="/privacy" data-i18n="foot.privacy">Privacy</a><a href="/refunds" data-i18n="foot.refunds">Refunds</a>
+  <a href="mailto:support@deskmonk.app">support@deskmonk.app</a>
+  <span class="copy">© 2026 deskMonk by pelamx</span>
+</div></footer>
 </body>
 </html>

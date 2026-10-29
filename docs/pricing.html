@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="meta.ptitle">deskMonk Pricing</title>
+<meta name="description" data-i18n-content="meta.pdesc" content="deskMonk is free every day. deskMonk Pro removes the daily limits for $2.50 a month or $25 a year, on up to 3 computers.">
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="/site.css">
+<script src="/site.js" defer></script>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/logo.svg" alt="">deskMonk</a>
+  <nav>
+    <a class="hide-s" href="/#features" data-i18n="nav.features">Features</a>
+    <a href="/#pricing" data-i18n="nav.pricing">Pricing</a>
+    <a class="hide-s" href="/#faq" data-i18n="nav.faq">FAQ</a>
+    <a href="/#download" data-i18n="nav.download">Download</a>
+    <select class="langs" aria-label="Language"></select>
+  </nav>
+</div></header>
+
+<div class="wrap">
+  <section class="block center" id="pricing">
+    <span class="eyebrow" data-i18n="price.eyebrow">Pricing</span>
+    <h2 class="big" data-i18n="price.title">Free every day. Pro when you want no limits.</h2>
+    <p class="lead" data-i18n="price.lead">Every feature is in the free plan. Pro removes the daily limits, on up to 3 of your computers.</p>
+    <span id="cycle-words" hidden><span data-price="monthly">$2.50</span><span data-i18n="price.permonth">/ month</span><span data-i18n="price.monthnote">Cancel anytime</span></span>
+    <div class="cycle" role="group">
+      <button type="button" data-cycle="monthly" data-i18n="price.monthly">Monthly</button>
+      <button type="button" data-cycle="yearly" class="on"><span data-i18n="price.yearly">Yearly</span> <b data-i18n="price.save">−17%</b></button>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <div class="name" data-i18n="price.free">Free</div>
+        <div class="price" data-price="free">$0</div>
+        <div class="sub" data-i18n="price.forever">forever</div>
+        <ul>
+          <li data-i18n="price.f1">Scan, disk map, hardware and speed test</li>
+          <li data-i18n="price.f2">Clean up to <b>2 GB a day</b></li>
+          <li data-i18n="price.f3">Vault: <b>3</b> encryptions a day, up to <b>200 MB</b> each</li>
+          <li data-i18n="price.f4">Opening vaults: always free</li>
+          <li data-i18n="price.f5">Monk mode focus timer</li>
+          <li data-i18n="price.f6">App lock for <b>1</b> app</li>
+        </ul>
+        <div class="btns"><a class="btn" href="/#download" data-i18n="price.dl">Download</a></div>
+      </div>
+      <div class="plan pro">
+        <div class="name">deskMonk Pro</div>
+        <div class="price" id="pro-price"><span data-price="yearly">$25</span> <small data-i18n="price.peryear">/ year</small></div>
+        <div class="sub" id="pro-sub" data-i18n="price.yearnote">$2.08 a month, billed yearly</div>
+        <ul>
+          <li data-i18n="price.p1">Everything in Free</li>
+          <li data-i18n="price.p2"><b>Unlimited</b> cleaning</li>
+          <li data-i18n="price.p3"><b>Unlimited</b> Vault encryptions, any size</li>
+          <li data-i18n="price.p4">Lock <b>any number</b> of apps</li>
+          <li data-i18n="price.p5">One license for <b>up to 3 computers</b></li>
+          <li data-i18n="price.p6">Cancel anytime · 14-day refund</li>
+        </ul>
+        <div class="btns"><a class="btn primary" id="pro-buy" href="/buy?plan=yearly" data-i18n="price.buy">Get Pro</a></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:16px" data-i18n="price.note">Prices in USD; Paddle shows your local currency and any tax before you pay.</p>
+  </section>
+
+  <section class="block" style="max-width:780px;margin:0 auto">
+    <h2 data-i18n="how.title">How buying works</h2>
+    <ul>
+      <li data-i18n="how.1">The easiest way: in deskMonk, press <b>⭐ Get Pro</b>. That computer turns Pro by itself after you pay.</li>
+      <li data-i18n="how.2">Buying on this site gives you a <b>license key</b> right after payment, also sent to your email by Paddle. Enter it in deskMonk under ⭐ Pro → "Have a license key?" on up to 3 computers.</li>
+      <li data-i18n="how.3">Payments are handled by <a href="https://www.paddle.com">Paddle</a>, our reseller and merchant of record. Paddle shows any sales tax for your country before you pay and emails your receipt.</li>
+      <li data-i18n="how.4">The subscription renews automatically until you cancel. Cancel in the app (⭐ Pro → Manage subscription), on <a href="/account">your license page</a>, or by writing to <a href="mailto:support@deskmonk.app">support@deskmonk.app</a>; you keep Pro until the end of the period you paid for.</li>
+      <li data-i18n="how.5">Not happy? Ask within 14 days for a full refund. See the <a href="/refunds">refund policy</a>.</li>
+      <li data-i18n="how.6">In the Mac App Store version, Pro is an Apple subscription that Apple bills and you manage in your Apple account. App lock is not part of the App Store version.</li>
+    </ul>
+  </section>
+</div>
+
+<footer class="site"><div class="wrap">
+  <a href="/#pricing" data-i18n="nav.pricing">Pricing</a><a href="/account" data-i18n="foot.account">My license</a>
+  <a href="/terms" data-i18n="foot.terms">Terms</a><a href="/privacy" data-i18n="foot.privacy">Privacy</a><a href="/refunds" data-i18n="foot.refunds">Refunds</a>
+  <a href="mailto:support@deskmonk.app">support@deskmonk.app</a>
+  <span class="copy">© 2026 deskMonk by pelamx</span>
+</div></footer>
+</body>
+</html>

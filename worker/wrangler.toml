@@ -1,16 +1,22 @@
-name = "deskmonk-stats"
+name = "deskmonk"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
-# Only the custom domain; the apps are built with DESKMONK_TELEMETRY_URL pointing here.
+# Everything lives on deskmonk.app: the website (../docs) and, on paths with no file there,
+# the API (/api/events, /api/license/*), /admin and the /buy checkout pages.
 workers_dev = false
-routes = [{ pattern = "stats.bubbletranslate.app", custom_domain = true }]
+routes = [{ pattern = "deskmonk.app", custom_domain = true }]
+
+[assets]
+directory = "../docs"
+binding = "ASSETS"
+# These pages are translated by the worker (src/site.ts) before they are sent; every other file is served as is.
+run_worker_first = ["/", "/index.html", "/pricing", "/pricing.html"]
 
 [[d1_databases]]
 binding = "DB"
-# The D1 database keeps the app's former name: Cloudflare cannot rename D1 databases.
-database_name = "cleanspace-stats"
-database_id = "21dfe637-f8c8-4edf-b9ff-c4ec4b19c492"
+database_name = "deskmonk"
+database_id = "e0bfa82a-e5c0-4b68-ade8-4c5fad7b1af2"
 
 # Secret, not here: ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN), the /admin password for user "admin".
 

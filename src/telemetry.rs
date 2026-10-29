@@ -88,6 +88,12 @@ impl Telemetry {
         self.send(serde_json::json!({ "kind": "clean", "client": client, "files": files, "bytes": bytes }));
     }
 
+    /// A feature was used: "vault" (detail "encrypt"/"open"), "focus" (a focus session finished),
+    /// "pro" (the Pro dialog opened; detail = which button or limit opened it), "bought" (detail = store).
+    pub fn used(&self, client: &str, kind: &str, detail: &str) {
+        self.send(serde_json::json!({ "kind": kind, "client": client, "detail": detail }));
+    }
+
     fn send(&self, mut event: serde_json::Value) {
         let (Some(url), Some(true)) = (URL, self.consent) else {
             return;
@@ -95,6 +101,8 @@ impl Telemetry {
         event["install_id"] = self.install_id.clone().into();
         event["version"] = env!("CARGO_PKG_VERSION").into();
         event["os"] = std::env::consts::OS.into();
+        event["plan"] = if crate::plan::Plan::load().is_pro() { "pro" } else { "free" }.into();
+        event["channel"] = if cfg!(feature = "appstore") { "appstore" } else { "web" }.into();
         // Fire and forget: stats must never block or break cleaning.
         std::thread::spawn(move || {
             let _ = ureq::post(url)

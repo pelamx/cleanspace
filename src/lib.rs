@@ -81,7 +81,7 @@ impl Deletion {
                 let outcome = if is_permanent(&item, permanent) {
                     remove(&item.path)
                 } else {
-                    trash::delete(&item.path).map_err(|e| std::io::Error::other(e.to_string()))
+                    to_trash(&item.path).map_err(|e| std::io::Error::other(e.to_string()))
                 };
                 match outcome {
                     Ok(()) => result.freed += item.size,
@@ -181,8 +181,44 @@ pub fn set_selection(items: &mut [Item], cat: Option<scan::Category>, on: bool) 
 
 /// The app's settings folder. Settings saved under the app's former name (cleanSpace) are moved here once,
 /// so existing installs keep their install id, consent and app locks.
+/// Settings folder of the sandboxed (Mac App Store) build, saved before HOME is changed; see [`use_real_home`].
+static SANDBOX_CONFIG: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// Whether this runs in the macOS app sandbox (the Mac App Store build).
+pub fn sandboxed() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+}
+
+/// In the sandbox HOME is the app's container; scanning and the folder shortcuts need the user's real home,
+/// so HOME is pointed back at it. Settings stay in the container. Call first thing in `main`, before threads.
+pub fn use_real_home() {
+    #[cfg(target_os = "macos")]
+    if sandboxed() {
+        let _ = SANDBOX_CONFIG.set(dirs::config_dir());
+        let pw = unsafe { libc::getpwuid(libc::getuid()) };
+        if !pw.is_null() {
+            let home = unsafe { std::ffi::CStr::from_ptr((*pw).pw_dir) }.to_string_lossy().into_owned();
+            // SAFETY: called at startup before any other thread exists.
+            unsafe { std::env::set_var("HOME", home) };
+        }
+    }
+}
+
+/// Moves a file or folder to the Trash. The sandboxed build may not ask Finder to do it, so it uses
+/// NSFileManager there (Finder's "Put Back" then does not know the original place).
+pub fn to_trash(path: &Path) -> Result<(), trash::Error> {
+    #[cfg(target_os = "macos")]
+    if sandboxed() {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut ctx = trash::TrashContext::default();
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        return ctx.delete(path);
+    }
+    trash::delete(path)
+}
+
 pub fn config_dir() -> Option<std::path::PathBuf> {
-    let base = dirs::config_dir()?;
+    let base = SANDBOX_CONFIG.get().cloned().flatten().or_else(dirs::config_dir)?;
     let dir = base.join("deskmonk");
     let old = base.join("cleanspace");
     if !dir.exists() && old.is_dir() {

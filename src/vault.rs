@@ -20,6 +20,39 @@ const HEADER: usize = 8 + 16 + 7;
 const CHUNK: usize = 64 * 1024;
 const TAG: usize = 16;
 
+fn list_path() -> Option<PathBuf> {
+    Some(crate::config_dir()?.join("vaults"))
+}
+
+/// Vaults made with deskMonk, newest first, so they can be found and opened again.
+// shortcut: one path per line, so a file name containing a line break is not remembered correctly.
+pub fn list() -> Vec<PathBuf> {
+    let Some(text) = list_path().and_then(|p| fs::read_to_string(p).ok()) else {
+        // No list yet: vaults made before the list existed are looked up once.
+        let found = find_vaults();
+        let _ = save_list(&found);
+        return found;
+    };
+    text.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect()
+}
+
+/// .dmvault files in the home folder, through Spotlight. The sandboxed build may not run it and finds none.
+fn find_vaults() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir().filter(|_| cfg!(target_os = "macos") && !crate::sandboxed()) else {
+        return Vec::new();
+    };
+    let query = format!("kMDItemFSName == \"*.{EXT}\"");
+    let out = std::process::Command::new("mdfind").arg("-onlyin").arg(&home).arg(query).output();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    text.lines().map(PathBuf::from).filter(|p| is_vault(p) && !p.starts_with(home.join(".Trash"))).collect()
+}
+
+pub fn save_list(vaults: &[PathBuf]) -> io::Result<()> {
+    let path = list_path().ok_or_else(|| io::Error::other("no config folder"))?;
+    fs::create_dir_all(path.parent().unwrap())?;
+    fs::write(path, vaults.iter().map(|v| format!("{}\n", v.display())).collect::<String>())
+}
+
 pub fn is_vault(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == EXT)
 }
