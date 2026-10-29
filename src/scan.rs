@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn classifies_files() {
-        let dir = std::env::temp_dir().join(format!("cleanspace-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("deskmonk-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         for d in [
             "sub",

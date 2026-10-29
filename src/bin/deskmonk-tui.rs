@@ -1,7 +1,7 @@
-//! Terminal UI for servers / cloud machines: `cleanspace-tui [FOLDER]` (default: home).
+//! Terminal UI for servers / cloud machines: `deskmonk-tui [FOLDER]` (default: home).
 
-use cleanspace::scan::{Category, Item, Phase, human_size};
-use cleanspace::telemetry::{self, Telemetry};
+use deskmonk::scan::{Category, Item, Phase, human_size};
+use deskmonk::telemetry::{self, Telemetry};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -32,7 +32,7 @@ struct App {
     /// Phase of the partial results on screen.
     phase: Option<Phase>,
     prompt: Prompt,
-    deleting: Option<cleanspace::Deletion>,
+    deleting: Option<deskmonk::Deletion>,
     status: String,
     telemetry: Telemetry,
 }
@@ -66,17 +66,26 @@ fn main() -> io::Result<()> {
         telemetry,
     };
     app.start_scan();
+    app.send_opened();
     ratatui::run(|t| app.run(t))
 }
 
 impl App {
+    /// Hardware detection spawns system tools, so it runs off the UI thread.
+    fn send_opened(&self) {
+        if self.telemetry.consent == Some(true) {
+            let telemetry = self.telemetry.clone();
+            std::thread::spawn(move || telemetry.opened("tui", &deskmonk::hardware::detect()));
+        }
+    }
+
     fn start_scan(&mut self) {
         let progress = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = channel();
         let (root, counter) = (self.root.clone(), progress.clone());
         std::thread::spawn(move || {
             let partial_tx = tx.clone();
-            let items = cleanspace::scan_default(&root, &counter, move |items, phase| {
+            let items = deskmonk::scan_default(&root, &counter, move |items, phase| {
                 let _ = partial_tx.send((Some(phase), items));
             });
             tx.send((None, items))
@@ -110,7 +119,7 @@ impl App {
                         .scan_done("tui", progress.load(Ordering::Relaxed), &items);
                     self.scanning = None;
                 }
-                cleanspace::keep_selection(&self.items, &mut items);
+                deskmonk::keep_selection(&self.items, &mut items);
                 if self.items.is_empty() {
                     self.list.select(Some(0));
                 }
@@ -138,7 +147,10 @@ impl App {
             let yes = matches!(key.code, KeyCode::Char('e' | 'E' | 'y' | 'Y'));
             match std::mem::replace(&mut self.prompt, Prompt::None) {
                 Prompt::Consent => match key.code {
-                    _ if yes => self.telemetry.set_consent(true),
+                    _ if yes => {
+                        self.telemetry.set_consent(true);
+                        self.send_opened();
+                    }
                     KeyCode::Char('h' | 'H' | 'n' | 'N') | KeyCode::Esc => {
                         self.telemetry.set_consent(false)
                     }
@@ -147,7 +159,7 @@ impl App {
                 p @ (Prompt::Trash | Prompt::Delete) => {
                     if yes {
                         // Runs in the background; the screen keeps updating with progress.
-                        self.deleting = Some(cleanspace::Deletion::start(
+                        self.deleting = Some(deskmonk::Deletion::start(
                             &mut self.items,
                             p == Prompt::Delete,
                             || {},
@@ -191,10 +203,11 @@ impl App {
                             self.list.select_next();
                         }
                     }
-                    KeyCode::Char(c @ ('a' | 'n')) => self
-                        .visible()
-                        .into_iter()
-                        .for_each(|i| self.items[i].selected = c == 'a'),
+                    KeyCode::Char(c @ ('a' | 'n')) => deskmonk::set_selection(
+                        &mut self.items,
+                        Some(Category::ALL[self.tab]),
+                        c == 'a',
+                    ),
                     // The final scan list would bring deleted items back, so deleting waits for it.
                     KeyCode::Char('d' | 'D') if self.scanning.is_some() => {
                         self.status =
@@ -243,7 +256,7 @@ impl App {
         };
         f.render_widget(
             Paragraph::new(format!(
-                "cleanSpace by pelamx  {}{scanning}",
+                "deskMonk by pelamx  {}{scanning}",
                 self.root.display()
             ))
             .bold(),
@@ -308,7 +321,7 @@ impl App {
 
         let text = match self.prompt {
             Prompt::None => return,
-            Prompt::Consent => "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) gönderilsin mi?\nDosya adları ve yolları asla gönderilmez.  [e]vet / [h]ayır".to_string(),
+            Prompt::Consent => "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) ve donanım bilgileri\n(işlemci, bellek, disk, ekran kartı, pil: marka, model, doluluk) gönderilsin mi?\nDosya adları, yollar, seri numaraları ve kullanıcı adı asla gönderilmez.  [e]vet / [h]ayır".to_string(),
             Prompt::Trash => format!("{n} öğe ({}) temizlenecek: gereksiz dosyalar kalıcı silinir, diğerleri çöp kutusuna taşınır. Emin misiniz? [e/h]", human_size(size)),
             Prompt::Delete => format!("{n} dosya ({}) KALICI olarak silinecek, geri alınamaz! Emin misiniz? [e/h]", human_size(size)),
         };

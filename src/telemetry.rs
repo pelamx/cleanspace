@@ -1,12 +1,14 @@
-//! Opt-in anonymous usage stats. Never sends file names or paths, only counts and byte totals.
-//! Disabled entirely unless built with `CLEANSPACE_TELEMETRY_URL=https://host/api/events`.
+//! Opt-in anonymous usage stats. Never sends file names or paths, only counts, byte totals and hardware specs.
+//! Disabled entirely unless built with `DESKMONK_TELEMETRY_URL=https://host/api/events`.
 
+use crate::hardware::Component;
 use crate::scan::{Category, Item};
 use std::fs;
 use std::path::PathBuf;
 
-pub const URL: Option<&str> = option_env!("CLEANSPACE_TELEMETRY_URL");
+pub const URL: Option<&str> = option_env!("DESKMONK_TELEMETRY_URL");
 
+#[derive(Clone)]
 pub struct Telemetry {
     pub install_id: String,
     /// None = user has not been asked yet.
@@ -14,18 +16,23 @@ pub struct Telemetry {
 }
 
 fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("cleanspace").join("telemetry"))
+    Some(crate::config_dir()?.join("telemetry"))
 }
 
 impl Telemetry {
-    /// File format: line 1 install id, line 2 "yes"/"no" (absent = not asked).
+    /// File format: line 1 install id, line 2 "yes-hw"/"no" (absent = not asked).
+    /// An old "yes" was given before hardware specs were collected, so the user is asked again.
     pub fn load() -> Self {
         let text = config_path()
             .and_then(|p| fs::read_to_string(p).ok())
             .unwrap_or_default();
         let mut lines = text.lines();
         let install_id = lines.next().filter(|l| !l.is_empty()).map(str::to_owned);
-        let consent = lines.next().map(|l| l == "yes");
+        let consent = match lines.next() {
+            Some("yes-hw") => Some(true),
+            Some("no") => Some(false),
+            _ => None,
+        };
         Self {
             install_id: install_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             consent,
@@ -38,7 +45,7 @@ impl Telemetry {
             let _ = fs::create_dir_all(path.parent().unwrap());
             let _ = fs::write(
                 path,
-                format!("{}\n{}\n", self.install_id, if yes { "yes" } else { "no" }),
+                format!("{}\n{}\n", self.install_id, if yes { "yes-hw" } else { "no" }),
             );
         }
     }
@@ -66,6 +73,15 @@ impl Telemetry {
             "old_download_bytes": bytes(Category::OldDownload),
             "large_bytes": bytes(Category::Large),
         }));
+    }
+
+    /// Sent once per app start: counts as a usage session and keeps the admin panel's hardware list current.
+    pub fn opened(&self, client: &str, specs: &[Component]) {
+        let specs: Vec<_> = specs
+            .iter()
+            .map(|c| serde_json::json!({ "kind": c.kind, "brand": c.brand, "name": c.name, "detail": c.detail }))
+            .collect();
+        self.send(serde_json::json!({ "kind": "open", "client": client, "specs": specs }));
     }
 
     pub fn clean_done(&self, client: &str, files: usize, bytes: u64) {

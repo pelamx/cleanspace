@@ -1,13 +1,13 @@
-# cleanSpace by pelamx — Akıllı depolama temizleyici
+# deskMonk by pelamx — Akıllı depolama temizleyici
 
 Bilgisayardaki gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur.
 Silmeden önce ne kadar alan kazanılacağını gösterir. macOS, Linux ve Windows.
 
 | Binary | Ne için |
 |---|---|
-| `cleanspace` | Masaüstü uygulaması (egui) |
-| `cleanspace-tui` | Terminal arayüzü — sunucular / cloud makineler için |
-| `cleanspace-server` | Anonim kullanım istatistikleri API'si + admin paneli |
+| `deskmonk` | Masaüstü uygulaması (egui) |
+| `deskmonk-tui` | Terminal arayüzü — sunucular / cloud makineler için |
+| `deskmonk-server` | Anonim kullanım istatistikleri API'si + admin paneli |
 
 ## Kategoriler
 
@@ -28,53 +28,81 @@ TUI'de `d` aynı kuralla temizler, `D` her şeyi kalıcı siler (sunucularda ç�
 
 ## İndirme
 
-[Releases](https://github.com/pelamx/cleanspace/releases) sayfasında:
-- `cleanspace-linux-x86_64.tar.gz`: masaüstü uygulaması, simgesi ve `.desktop` dosyasıyla birlikte (glibc 2.35+, yani Ubuntu 22.04, Debian 12 ve sonrası)
-- `cleanspace-tui-linux-x86_64`: statik TUI, her x86_64 Linux'ta çalışır (sunucular, cloud)
+[Releases](https://github.com/pelamx/deskmonk/releases) sayfasında:
+- `deskmonk-linux-x86_64.tar.gz`: masaüstü uygulaması, simgesi ve `.desktop` dosyasıyla birlikte (glibc 2.35+, yani Ubuntu 22.04, Debian 12 ve sonrası)
+- `deskmonk-tui-linux-x86_64`: statik TUI, her x86_64 Linux'ta çalışır (sunucular, cloud)
 
 ```sh
-tar xzf cleanspace-linux-x86_64.tar.gz && ./cleanspace-linux-x86_64/cleanspace
+tar xzf deskmonk-linux-x86_64.tar.gz && ./deskmonk-linux-x86_64/deskmonk
 ```
 
 ## Derleme
 
 ```sh
 cargo build --release                       # hepsi
-cargo build --release --no-default-features --features tui --bin cleanspace-tui   # sadece TUI (sunucu, GUI bağımlılığı yok)
-cargo build --release -p cleanspace-server
+cargo build --release --no-default-features --features tui --bin deskmonk-tui   # sadece TUI (sunucu, GUI bağımlılığı yok)
+cargo build --release -p deskmonk-server
 ```
 
 ## Masaüstü
 
 ```sh
-cleanspace [KLASÖR]   # klasör verilirse açılır açılmaz taranır
+deskmonk [KLASÖR]   # klasör verilirse açılır açılmaz taranır
 ```
 Kenar çubuğunda kategoriler, üstte klasör seçimi (Gözat… / hızlı klasörler) ve özet kartları bulunur.
 Satıra tıklamak seçer, 📂 ise dosyayı klasöründe gösterir. Açık/koyu tema sistemi izler.
+macOS'ta pencereyi kapatmak (✕ / Cmd+W) uygulamayı gizler: tarama ve temizleme arka planda sürer, Dock simgesine
+tıklayınca pencere geri gelir. Çıkmak için Cmd+Q veya Dock → Çık.
+Kenar çubuğundaki **Sistem → Donanım** terminal görünümünde bileşenleri markalarıyla (işlemci, bellek, ekran kartı,
+ekran, disk, pil) ve doluluk/pil sağlığı/çalışma süresi gibi kullanım bilgileriyle gösterir.
+**Sistem → Disk haritası** seçilen klasörün alanını kutular halinde (treemap) gösterir: kutuya tıklayınca içine girilir,
+sağ tık klasörde gösterir, üstteki yol ile geri çıkılır.
+Donanım ekranındaki **Disk hız testi** sistem diskine 1 GB'lık geçici dosya yazıp geri okur ve MB/s gösterir; dosya her
+durumda silinir, yeterli boş alan (3 GB) yoksa test çalışmaz.
+**Sistem → Uygulama kilidi** (macOS): şifre belirlenip uygulamalar seçilir; kilitli bir uygulama açılınca deskMonk onu
+durdurur ve şifre sorar, doğru şifreyle açar, uygulama kapatılınca yeniden kilitler. Zaten açık olan uygulamalar (kaydedilmemiş
+iş olabilir) kapatılana kadar durdurulmaz. deskMonk açıkken çalışır (pencereyi kapatmak sorun değil); Cmd+Q ile çıkılırsa
+kilit kalkar, bu yüzden bir gizlilik kilidi olarak düşünülmeli, güvenlik duvarı olarak değil.
 
 ## TUI
 
 ```sh
-cleanspace-tui [KLASÖR]   # varsayılan: ev dizini
+deskmonk-tui [KLASÖR]   # varsayılan: ev dizini
 ```
 `↑↓` gezin · `boşluk` seç · `a/n` tümü/hiçbiri · `←→` kategori · `d` temizle · `D` hepsini kalıcı sil · `r` yeniden tara · `t` istatistik aç/kapa · `q` çık
 
 ## Kullanım istatistikleri ve admin paneli
 
 İstatistik gönderimi **opt-in**'dir: ilk açılışta kullanıcıya sorulur, istendiğinde kapatılabilir.
-Sadece sayılar gider (dosya sayısı, bayt toplamları, OS, sürüm, rastgele kurulum ID). **Dosya adı veya yolu asla gönderilmez.**
-Uygulama `CLEANSPACE_TELEMETRY_URL` ile derlenmezse hiçbir veri gönderilmez ve izin de sorulmaz.
+Sayılar (dosya sayısı, bayt toplamları, OS, sürüm, rastgele kurulum ID) ve her açılışta donanım bilgileri (bileşen, marka,
+model, disk doluluğu, pil sağlığı) gider. **Dosya adı, yolu, seri numarası, bilgisayar veya kullanıcı adı asla gönderilmez.**
+Donanım eklenmeden önce "evet" demiş kullanıcılara izin yeniden sorulur.
+Uygulama `DESKMONK_TELEMETRY_URL` ile derlenmezse hiçbir veri gönderilmez ve izin de sorulmaz.
 
 ```sh
-CLEANSPACE_TELEMETRY_URL=https://stats.example.com/api/events cargo build --release
+DESKMONK_TELEMETRY_URL=https://stats.bubbletranslate.app/api/events cargo build --release
+```
 
-CLEANSPACE_ADMIN_TOKEN='uzun-gizli-bir-token' \
-CLEANSPACE_ADDR=0.0.0.0:8080 CLEANSPACE_DB=/var/lib/cleanspace.db \
-cleanspace-server
+Canlı sunucu `worker/` içindeki Cloudflare Worker'dır (D1 veritabanı `deskmonk-stats`, adres `stats.bubbletranslate.app`).
+Admin şifresi `ADMIN_TOKEN` secret'ıdır:
+
+```sh
+cd worker && npm install && npm test
+npx wrangler secret put ADMIN_TOKEN   # şifreyi değiştirmek için
+npm run deploy
+```
+
+Kendi makinende çalıştırmak istersen `deskmonk-server` aynı API'yi ve paneli sunar:
+
+```sh
+DESKMONK_ADMIN_TOKEN='uzun-gizli-bir-token' \
+DESKMONK_ADDR=0.0.0.0:8080 DESKMONK_DB=/var/lib/deskmonk.db \
+deskmonk-server
 ```
 
 Admin paneli `/admin` adresinde (HTTP Basic auth, kullanıcı adı `admin`, şifre token). Panelde şunlar var:
 toplam/aktif kullanıcı, tarama/temizleme sayıları, bulunan/kazanılan alan, OS/arayüz/sürüm kırılımı,
-kategori dağılımı, son 30 gün ve kullanıcı listesi. Her kurulum için ayrıntılı olay geçmişi `/admin/user/<id>` adresinde.
+bileşen marka dağılımı, kategori dağılımı, son 30 gün ve kullanıcı listesi (işlemci ve açılış sayısıyla). Her kurulumun
+donanımı (terminal görünümünde) ve ayrıntılı olay geçmişi `/admin/user/<id>` adresinde.
 
 > Sunucu düz HTTP konuşur, internete açarken önüne TLS yapan bir reverse proxy (Caddy/nginx) koyun.

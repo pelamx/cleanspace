@@ -704,32 +704,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 
 [[package]]
-name = "cleanspace"
-version = "0.2.0"
-dependencies = [
- "dirs",
- "eframe",
- "ratatui",
- "rfd",
- "serde_json",
- "sha2",
- "trash",
- "ureq",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "cleanspace-server"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "rusqlite",
- "serde_json",
- "tiny_http",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -995,6 +969,35 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "deskmonk"
+version = "0.3.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "libc",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "ratatui",
+ "rfd",
+ "serde_json",
+ "sha2",
+ "trash",
+ "ureq",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "deskmonk-server"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "rusqlite",
+ "serde_json",
+ "tiny_http",
 ]
 
 [[package]]

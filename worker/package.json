@@ -1,0 +1,17 @@
+{
+  "name": "deskmonk-stats",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "schema:remote": "wrangler d1 execute cleanspace-stats --remote --file=schema.sql",
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260831.1",
+    "typescript": "^5.7.0",
+    "vitest": "~4.1",
+    "wrangler": "^4.0.0"
+  }
+}

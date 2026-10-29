@@ -1,9 +1,9 @@
-//! CleanSpace telemetry server + admin panel.
+//! DeskMonk telemetry server + admin panel.
 //!
-//! Env: CLEANSPACE_ADMIN_TOKEN (required), CLEANSPACE_ADDR (default 0.0.0.0:8080), CLEANSPACE_DB (default cleanspace.db).
+//! Env: DESKMONK_ADMIN_TOKEN (required), DESKMONK_ADDR (default 0.0.0.0:8080), DESKMONK_DB (default deskmonk.db).
 //! POST /api/events        ← apps send JSON events here
 //! GET  /admin             overview (HTTP Basic auth: user "admin", password = admin token)
-//! GET  /admin/user/<id>   one installation's full history
+//! GET  /admin/user/<id>   one installation's full history and hardware
 
 use base64::Engine;
 use rusqlite::types::ValueRef;
@@ -12,7 +12,10 @@ use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-const MAX_BODY: u64 = 4096;
+// Room for an "open" event's hardware list.
+const MAX_BODY: u64 = 16384;
+const MAX_SPECS: usize = 40;
+const MAX_SPEC_TEXT: usize = 200;
 const SIZE_FIELDS: [&str; 5] = [
     "bytes",
     "duplicate_bytes",
@@ -22,20 +25,20 @@ const SIZE_FIELDS: [&str; 5] = [
 ];
 
 fn main() {
-    let token = std::env::var("CLEANSPACE_ADMIN_TOKEN").unwrap_or_default();
+    let token = std::env::var("DESKMONK_ADMIN_TOKEN").unwrap_or_default();
     if token.len() < 12 {
-        eprintln!("CLEANSPACE_ADMIN_TOKEN must be set (at least 12 characters)");
+        eprintln!("DESKMONK_ADMIN_TOKEN must be set (at least 12 characters)");
         std::process::exit(1);
     }
     let expected_auth = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("admin:{token}"))
     );
-    let addr = std::env::var("CLEANSPACE_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
-    let db = open_db(&std::env::var("CLEANSPACE_DB").unwrap_or_else(|_| "cleanspace.db".into()))
+    let addr = std::env::var("DESKMONK_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let db = open_db(&std::env::var("DESKMONK_DB").unwrap_or_else(|_| "deskmonk.db".into()))
         .expect("open database");
     let server = Server::http(&addr).expect("bind address");
-    println!("CleanSpace server listening on http://{addr}  (admin: /admin)");
+    println!("DeskMonk server listening on http://{addr}  (admin: /admin)");
 
     // shortcut: single-threaded request loop; fine for thousands of events/minute, put it behind a queue or async runtime beyond that.
     for req in server.incoming_requests() {
@@ -53,7 +56,8 @@ fn open_db(path: &str) -> rusqlite::Result<Connection> {
             os TEXT NOT NULL, client TEXT NOT NULL, kind TEXT NOT NULL, files INTEGER NOT NULL, bytes INTEGER NOT NULL,
             duplicate_bytes INTEGER NOT NULL, junk_bytes INTEGER NOT NULL, old_download_bytes INTEGER NOT NULL, large_bytes INTEGER NOT NULL);
          CREATE INDEX IF NOT EXISTS events_install ON events(install_id, ts);
-         CREATE INDEX IF NOT EXISTS events_ts ON events(ts);",
+         CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+         CREATE TABLE IF NOT EXISTS hardware(install_id TEXT PRIMARY KEY, ts INTEGER NOT NULL, specs TEXT NOT NULL);",
     )?;
     Ok(db)
 }
@@ -96,7 +100,7 @@ fn handle(mut req: Request, db: &Connection, expected_auth: &str) -> std::io::Re
         .unwrap_or_default();
     if !constant_time_eq(auth.as_bytes(), expected_auth.as_bytes()) {
         let challenge =
-            Header::from_bytes("WWW-Authenticate", "Basic realm=\"CleanSpace admin\"").unwrap();
+            Header::from_bytes("WWW-Authenticate", "Basic realm=\"DeskMonk admin\"").unwrap();
         return req.respond(Response::empty(401).with_header(challenge));
     }
     let page = match path.strip_prefix("/admin/user/") {
@@ -125,6 +129,8 @@ struct Event {
     kind: String,
     files: i64,
     sizes: [i64; 5],
+    /// Latest hardware list (re-serialized validated JSON), sent with "open" events.
+    specs: Option<String>,
 }
 
 /// Validates untrusted input from the apps.
@@ -153,13 +159,33 @@ fn parse_event(body: &str) -> Result<Event, String> {
         }
     };
     let kind = text("kind", 16)?;
-    if kind != "scan" && kind != "clean" {
+    if !["scan", "clean", "open"].contains(&kind.as_str()) {
         return Err("invalid kind".into());
     }
     let mut sizes = [0; 5];
     for (slot, key) in sizes.iter_mut().zip(SIZE_FIELDS) {
         *slot = count(key)?;
     }
+    // Free text from the OS (model names); shown escaped, so only length and control characters are limited.
+    let specs = match &v["specs"] {
+        serde_json::Value::Null => None,
+        serde_json::Value::Array(list) if kind == "open" && list.len() <= MAX_SPECS => {
+            let mut clean = Vec::new();
+            for spec in list {
+                let mut obj = serde_json::Map::new();
+                for key in ["kind", "brand", "name", "detail"] {
+                    let s = spec[key].as_str().ok_or("invalid specs")?;
+                    if s.chars().count() > MAX_SPEC_TEXT || s.chars().any(char::is_control) {
+                        return Err("invalid specs".into());
+                    }
+                    obj.insert(key.into(), s.into());
+                }
+                clean.push(serde_json::Value::Object(obj));
+            }
+            Some(serde_json::Value::Array(clean).to_string())
+        }
+        _ => return Err("invalid specs".into()),
+    };
     Ok(Event {
         install_id: text("install_id", 64)?,
         version: text("version", 32)?,
@@ -168,6 +194,7 @@ fn parse_event(body: &str) -> Result<Event, String> {
         kind,
         files: count("files")?,
         sizes,
+        specs,
     })
 }
 
@@ -182,6 +209,13 @@ fn insert(db: &Connection, e: &Event) -> rusqlite::Result<()> {
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![now, e.install_id, e.version, e.os, e.client, e.kind, e.files, b, d, j, o, l],
     )?;
+    if let Some(specs) = &e.specs {
+        db.execute(
+            "INSERT INTO hardware(install_id, ts, specs) VALUES (?1, ?2, ?3)
+             ON CONFLICT(install_id) DO UPDATE SET ts = excluded.ts, specs = excluded.specs",
+            params![e.install_id, now, specs],
+        )?;
+    }
     Ok(())
 }
 
@@ -267,6 +301,10 @@ main{{max-width:1200px;margin:auto}}a{{color:var(--accent)}}h1{{margin:0 0 4px}}
 .scroll{{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:10px}}
 table{{border-collapse:collapse;width:100%}}th,td{{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}}
 th{{font-size:12px;color:var(--muted);font-weight:600}}td.n{{text-align:right;font-variant-numeric:tabular-nums}}tr:last-child td{{border-bottom:0}}
+.term{{background:#070b08;color:#39ff14;border:1px solid #1e5c2b;border-radius:10px;padding:16px 18px;overflow-x:auto;
+font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-shadow:0 0 6px rgba(57,255,20,.35)}}
+.term .dim{{color:#1f9e45}}.term .k{{color:#1f9e45;display:inline-block;min-width:12ch}}.term .b{{font-weight:700}}
+.term .cur{{animation:blink 1s steps(1) infinite}}@keyframes blink{{50%{{opacity:0}}}}
 </style></head><body><main>{body}</main></body></html>"
     )
 }
@@ -304,7 +342,7 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
         .as_secs() as i64;
     let (week, month) = (now - 7 * DAY, now - 30 * DAY);
     let mut body = String::from(
-        "<h1>cleanSpace by pelamx — Admin</h1><div class=muted>Anonim kullanım istatistikleri</div>",
+        "<h1>deskMonk by pelamx — Admin</h1><div class=muted>Anonim kullanım istatistikleri</div>",
     );
     body += &cards(
         db,
@@ -313,10 +351,10 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
                 COUNT(DISTINCT CASE WHEN ts >= ?2 THEN install_id END),
                 SUM(kind='scan'), SUM(kind='clean'),
                 SUM(CASE WHEN kind='scan' THEN bytes END), SUM(CASE WHEN kind='clean' THEN bytes END),
-                SUM(CASE WHEN kind='clean' THEN files END)
+                SUM(CASE WHEN kind='clean' THEN files END), SUM(kind='open')
          FROM events",
         &[&week, &month],
-        &["Toplam kullanıcı", "Aktif (7 gün)", "Aktif (30 gün)", "Tarama", "Temizleme", "Bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya"],
+        &["Toplam kullanıcı", "Aktif (7 gün)", "Aktif (30 gün)", "Tarama", "Temizleme", "Bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya", "Uygulama açılışı"],
     )?;
     let group_by = |col: &str| {
         format!(
@@ -365,6 +403,16 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
     )?;
     body += &table(
         db,
+        "Bileşen markaları (son bilinen donanım)",
+        "SELECT json_extract(s.value, '$.kind'), json_extract(s.value, '$.brand'), COUNT(DISTINCT h.install_id)
+         FROM hardware h, json_each(h.specs) s WHERE json_extract(s.value, '$.brand') != ''
+         GROUP BY 1, 2 ORDER BY 1, 3 DESC",
+        &[],
+        &["Bileşen", "Marka", "Kullanıcı"],
+        false,
+    )?;
+    body += &table(
+        db,
         "Son 30 gün",
         "SELECT date(ts,'unixepoch'), COUNT(DISTINCT install_id), SUM(kind='scan'), SUM(kind='clean'),
                 SUM(CASE WHEN kind='clean' THEN bytes ELSE 0 END)
@@ -376,15 +424,18 @@ fn overview_page(db: &Connection) -> rusqlite::Result<String> {
     body += &table(
         db,
         "Kullanıcılar (son görülen, ilk 500)",
-        "SELECT install_id, MAX(os), group_concat(DISTINCT client), MAX(version),
+        "SELECT install_id, MAX(os),
+                (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
+                 WHERE h.install_id = events.install_id AND json_extract(s.value, '$.kind') = 'İşlemci'),
+                group_concat(DISTINCT client), MAX(version),
                 datetime(MIN(ts),'unixepoch'), datetime(MAX(ts),'unixepoch'),
-                SUM(kind='scan'), SUM(kind='clean'), SUM(CASE WHEN kind='clean' THEN bytes ELSE 0 END)
+                SUM(kind='open'), SUM(kind='scan'), SUM(kind='clean'), SUM(CASE WHEN kind='clean' THEN bytes ELSE 0 END)
          FROM events GROUP BY install_id ORDER BY MAX(ts) DESC LIMIT 500",
         &[],
-        &["Kurulum ID", "OS", "Arayüz", "Sürüm", "İlk görülme (UTC)", "Son görülme (UTC)", "Tarama", "Temizleme", "Kazanılan (boyut)"],
+        &["Kurulum ID", "OS", "İşlemci", "Arayüz", "Sürüm", "İlk görülme (UTC)", "Son görülme (UTC)", "Açılış", "Tarama", "Temizleme", "Kazanılan (boyut)"],
         true,
     )?;
-    Ok(layout("cleanSpace by pelamx — Admin", &body))
+    Ok(layout("deskMonk by pelamx — Admin", &body))
 }
 
 fn user_page(db: &Connection, id: &str) -> rusqlite::Result<String> {
@@ -394,13 +445,14 @@ fn user_page(db: &Connection, id: &str) -> rusqlite::Result<String> {
     );
     body += &cards(
         db,
-        "SELECT SUM(kind='scan'), SUM(kind='clean'),
+        "SELECT SUM(kind='open'), SUM(kind='scan'), SUM(kind='clean'),
                 CAST(AVG(CASE WHEN kind='scan' THEN files END) AS INTEGER), CAST(AVG(CASE WHEN kind='scan' THEN bytes END) AS INTEGER),
                 SUM(CASE WHEN kind='clean' THEN bytes END), SUM(CASE WHEN kind='clean' THEN files END)
          FROM events WHERE install_id = ?1",
         &[&id],
-        &["Tarama", "Temizleme", "Ort. taranan dosya", "Ort. bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya"],
+        &["Uygulama açılışı", "Tarama", "Temizleme", "Ort. taranan dosya", "Ort. bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya"],
     )?;
+    body += &hardware_block(db, id)?;
     body += &table(
         db,
         "Tüm olaylar",
@@ -411,6 +463,39 @@ fn user_page(db: &Connection, id: &str) -> rusqlite::Result<String> {
         false,
     )?;
     Ok(layout(&format!("Kurulum {}", esc(id)), &body))
+}
+
+/// The installation's latest hardware as a terminal-style listing.
+fn hardware_block(db: &Connection, id: &str) -> rusqlite::Result<String> {
+    let row: Option<(String, String)> = db
+        .query_row(
+            "SELECT datetime(ts,'unixepoch'), specs FROM hardware WHERE install_id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })?;
+    let Some((ts, specs)) = row else {
+        return Ok("<h2>Donanım</h2><div class=muted>Henüz donanım bilgisi gelmedi.</div>".into());
+    };
+    let specs: serde_json::Value = serde_json::from_str(&specs).unwrap_or_default();
+    let mut out = format!(
+        "<h2>Donanım</h2><pre class=term><span class=dim>root@deskmonk:~$ ./hwinfo --brands  # {} UTC</span>\n",
+        esc(&ts)
+    );
+    for s in specs.as_array().into_iter().flatten() {
+        let field = |k: &str| esc(s[k].as_str().unwrap_or(""));
+        let brand = field("brand");
+        let brand = if brand.is_empty() { String::new() } else { format!("<span class=b>[{}]</span> ", brand.to_uppercase()) };
+        out += &format!("<span class=k>{}</span> {brand}{}\n", field("kind").replace('i', "İ").to_uppercase(), field("name"));
+        if !field("detail").is_empty() {
+            out += &format!("<span class=dim>{:12} └─ {}</span>\n", "", field("detail"));
+        }
+    }
+    Ok(out + "<span class=dim>root@deskmonk:~$</span> <span class=cur>█</span></pre>")
 }
 
 #[cfg(test)]
@@ -431,6 +516,17 @@ mod tests {
         assert!(overview_page(&db).unwrap().contains("/admin/user/abc-123"));
         assert!(user_page(&db, "abc-123").unwrap().contains("2.0 KB"));
         assert!(user_page(&db, "<x>").unwrap().contains("&lt;x&gt;"));
+
+        let open = r#"{"install_id":"abc-123","version":"0.2.0","os":"macos","client":"gui","kind":"open",
+            "specs":[{"kind":"İşlemci","brand":"Apple","name":"Apple M5 Pro <b>","detail":"15 çekirdek"}]}"#;
+        insert(&db, &parse_event(open).unwrap()).unwrap();
+        insert(&db, &parse_event(open).unwrap()).unwrap();
+        let page = user_page(&db, "abc-123").unwrap();
+        assert!(page.contains("[APPLE]") && page.contains("Apple M5 Pro &lt;b&gt;") && !page.contains("Pro <b>"));
+        let overview = overview_page(&db).unwrap();
+        assert!(overview.contains("<td>Apple M5 Pro &lt;b&gt;</td>"));
+        assert!(parse_event(&open.replace("15 çekirdek", "a\\u0007")).is_err());
+        assert!(parse_event(&good.replace("\"files\":10", "\"specs\":[]")).is_err());
         assert!(constant_time_eq(b"abc", b"abc") && !constant_time_eq(b"abc", b"abd"));
     }
 }

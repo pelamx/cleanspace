@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=cleanSpace by pelamx
+Name=deskMonk by pelamx
 Comment=Akıllı depolama temizleyici
-Exec=cleanspace
-Icon=cleanspace
+Exec=deskmonk
+Icon=deskmonk
 Terminal=false
 Categories=Utility;System;
-StartupWMClass=cleanspace
+StartupWMClass=deskmonk

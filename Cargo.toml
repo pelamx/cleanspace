@@ -2,23 +2,23 @@
 members = ["server"]
 
 [package]
-name = "cleanspace"
-version = "0.2.0"
+name = "deskmonk"
+version = "0.3.0"
 edition = "2024"
 
 [features]
 default = ["gui", "tui"]
-gui = ["dep:eframe", "dep:rfd"]
+gui = ["dep:eframe", "dep:rfd", "dep:objc2", "dep:objc2-app-kit"]
 tui = ["dep:ratatui"]
 
 [[bin]]
-name = "cleanspace"
+name = "deskmonk"
 path = "src/main.rs"
 required-features = ["gui"]
 
 [[bin]]
-name = "cleanspace-tui"
-path = "src/bin/cleanspace-tui.rs"
+name = "deskmonk-tui"
+path = "src/bin/deskmonk-tui.rs"
 required-features = ["tui"]
 
 [dependencies]
@@ -32,3 +32,12 @@ trash = "5.2.9"
 ureq = "3"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already in the tree via eframe; used to hide the app when its window is closed.
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+
+[target.'cfg(unix)'.dependencies]
+# Already in the tree; statvfs and page-cache control for the disk speed test.
+libc = "0.2"

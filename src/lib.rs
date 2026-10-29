@@ -1,4 +1,8 @@
+pub mod applock;
+pub mod diskmap;
+pub mod hardware;
 pub mod scan;
+pub mod speedtest;
 pub mod telemetry;
 
 use scan::Item;
@@ -144,6 +148,28 @@ pub fn keep_selection(old: &[Item], new: &mut [Item]) {
     }
 }
 
+/// Ticks or unticks every item of `cat` (all categories when None). Selecting never ticks the first copy
+/// of a duplicate group, so at least one copy of every file survives a cleaning.
+pub fn set_selection(items: &mut [Item], cat: Option<scan::Category>, on: bool) {
+    let mut kept = std::collections::HashSet::new();
+    for item in items.iter_mut().filter(|i| cat.is_none_or(|c| i.category == c)) {
+        let first_copy = item.category == scan::Category::Duplicate && kept.insert(item.group);
+        item.selected = on && !first_copy;
+    }
+}
+
+/// The app's settings folder. Settings saved under the app's former name (cleanSpace) are moved here once,
+/// so existing installs keep their install id, consent and app locks.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    let base = dirs::config_dir()?;
+    let dir = base.join("deskmonk");
+    let old = base.join("cleanspace");
+    if !dir.exists() && old.is_dir() {
+        let _ = fs::rename(&old, &dir);
+    }
+    Some(dir)
+}
+
 /// Default scan roots: the given folder plus the Downloads folder (for "old downloads").
 /// See [`scan::scan`] for `on_partial`.
 pub fn scan_default(
@@ -159,11 +185,25 @@ pub fn scan_default(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn select_all_keeps_one_copy_per_group() {
+        use super::scan::{Category, Item};
+        let item = |category, group| Item { path: format!("{category:?}{group}").into(), size: 1, category, group, selected: false };
+        let mut items = vec![
+            item(Category::Duplicate, 1), item(Category::Duplicate, 1), item(Category::Duplicate, 1),
+            item(Category::Duplicate, 2), item(Category::Duplicate, 2), item(Category::Junk, 0),
+        ];
+        super::set_selection(&mut items, None, true);
+        assert_eq!(items.iter().map(|i| i.selected).collect::<Vec<_>>(), [false, true, true, false, true, true]);
+        super::set_selection(&mut items, Some(Category::Junk), false);
+        assert!(!items[5].selected && items[4].selected);
+    }
+
     #[cfg(unix)]
     #[test]
     fn removes_read_only_folders() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("cleanspace-rm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("deskmonk-rm-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("pkg/sub")).unwrap();
         std::fs::write(dir.join("pkg/sub/file"), "x").unwrap();
         for d in ["pkg", "pkg/sub"] {

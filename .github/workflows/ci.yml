@@ -24,24 +24,24 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build --release --workspace
         env:
-          CLEANSPACE_TELEMETRY_URL: ${{ vars.CLEANSPACE_TELEMETRY_URL }}
+          DESKMONK_TELEMETRY_URL: ${{ vars.DESKMONK_TELEMETRY_URL }}
       - uses: actions/upload-artifact@v4
         with:
-          name: cleanspace-${{ runner.os }}
+          name: deskmonk-${{ runner.os }}
           path: |
-            target/release/cleanspace
-            target/release/cleanspace-tui
-            target/release/cleanspace-server
+            target/release/deskmonk
+            target/release/deskmonk-tui
+            target/release/deskmonk-server
             target/release/*.exe
       - if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
         run: |
-          mkdir cleanspace-linux-x86_64
-          cp target/release/cleanspace assets/icon.png assets/cleanspace.desktop cleanspace-linux-x86_64/
-          tar czf cleanspace-linux-x86_64.tar.gz cleanspace-linux-x86_64
+          mkdir deskmonk-linux-x86_64
+          cp target/release/deskmonk assets/icon.png assets/deskmonk.desktop deskmonk-linux-x86_64/
+          tar czf deskmonk-linux-x86_64.tar.gz deskmonk-linux-x86_64
       - if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
         uses: softprops/action-gh-release@v2
         with:
-          files: cleanspace-linux-x86_64.tar.gz
+          files: deskmonk-linux-x86_64.tar.gz
 
   # Static Linux TUI binary: runs on any x86_64 distro (GCP/AWS images included), no glibc version issues.
   tui-musl:
@@ -53,15 +53,15 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features tui --bin cleanspace-tui
+      - run: cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features tui --bin deskmonk-tui
         env:
-          CLEANSPACE_TELEMETRY_URL: ${{ vars.CLEANSPACE_TELEMETRY_URL }}
-      - run: cp target/x86_64-unknown-linux-musl/release/cleanspace-tui cleanspace-tui-linux-x86_64
+          DESKMONK_TELEMETRY_URL: ${{ vars.DESKMONK_TELEMETRY_URL }}
+      - run: cp target/x86_64-unknown-linux-musl/release/deskmonk-tui deskmonk-tui-linux-x86_64
       - uses: actions/upload-artifact@v4
         with:
-          name: cleanspace-tui-linux-x86_64
-          path: cleanspace-tui-linux-x86_64
+          name: deskmonk-tui-linux-x86_64
+          path: deskmonk-tui-linux-x86_64
       - if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: cleanspace-tui-linux-x86_64
+          files: deskmonk-tui-linux-x86_64

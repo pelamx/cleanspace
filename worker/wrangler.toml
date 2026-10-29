@@ -1,0 +1,15 @@
+name = "deskmonk-stats"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Only the custom domain; the apps are built with DESKMONK_TELEMETRY_URL pointing here.
+workers_dev = false
+routes = [{ pattern = "stats.bubbletranslate.app", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+# The D1 database keeps the app's former name: Cloudflare cannot rename D1 databases.
+database_name = "cleanspace-stats"
+database_id = "21dfe637-f8c8-4edf-b9ff-c4ec4b19c492"
+
+# Secret, not here: ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN), the /admin password for user "admin".
