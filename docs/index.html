@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cleanSpace — Akıllı depolama temizleyici</title>
+<meta name="description" content="Gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur. Silmeden önce ne kadar yer kazanacağını gösterir.">
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #fff; --text: #16181d; --muted: #5b616e;
+    --line: #e3e6ec; --accent: #1f6feb; --accent-text: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #9aa4b2;
+            --line: #272d36; --accent: #4493f8; --accent-text: #06101d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 2.4rem; margin: 0 0 .2em; letter-spacing: -.02em; }
+  h1 span { color: var(--muted); font-size: 1rem; font-weight: 400; letter-spacing: 0; }
+  h2 { font-size: 1.15rem; margin: 2.4em 0 .6em; }
+  p.lead { font-size: 1.1rem; color: var(--muted); margin-top: 0; }
+  .dl { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 8px; }
+  a.btn { display: block; padding: 14px 20px; border-radius: 10px; text-decoration: none;
+          border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  a.btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+  a.btn b { display: block; font-size: 1rem; }
+  a.btn small { opacity: .75; font-size: .82rem; }
+  .note { color: var(--muted); font-size: .9rem; }
+  ul { padding-left: 1.2em; }
+  li { margin: .35em 0; }
+  code { background: var(--card); border: 1px solid var(--line); border-radius: 5px;
+         padding: 1px 5px; font-size: .88em; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+        padding: 14px 16px; overflow-x: auto; }
+  pre code { border: 0; background: none; padding: 0; }
+  footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: .9rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>cleanSpace <span>by pelamx</span></h1>
+  <p class="lead">Bilgisayardaki gereksiz dosyaları, kopyaları, eski indirmeleri ve büyük dosyaları bulur.
+  Silmeden önce ne kadar yer kazanacağını gösterir.</p>
+
+  <h2>İndir</h2>
+  <div class="dl">
+    <a class="btn primary" href="downloads/cleanspace-windows-x86_64.zip">
+      <b>Windows (x64)</b><small>ZIP · 6,2 MB · masaüstü + terminal</small></a>
+    <a class="btn" href="https://github.com/pelamx/cleanspace/releases/latest">
+      <b>Linux / macOS</b><small>Sürümler sayfası</small></a>
+  </div>
+  <p class="note">ZIP içinden <code>cleanspace.exe</code> dosyasını çalıştırın. İmzalanmamış olduğu için
+  Windows SmartScreen uyarı verebilir: <em>Ek bilgi → Yine de çalıştır</em>.</p>
+
+  <h2>Ne bulur</h2>
+  <ul>
+    <li><b>Kopyalar</b> — aynı boyut, aynı ilk 4 KB ve aynı SHA-256 içerik. 64 KB altı dosyalara bakmaz.</li>
+    <li><b>Gereksiz dosyalar</b> — <code>.tmp .bak .old .log .part</code>, <code>Thumbs.db</code>, <code>.DS_Store</code> ve benzerleri.</li>
+    <li><b>Eski indirmeler</b> — İndirilenler klasöründe 90 günden eski dosyalar.</li>
+    <li><b>Büyük dosyalar</b> — 500 MB ve üzeri.</li>
+  </ul>
+  <p>Seçtiğiniz klasörün yanı sıra İndirilenler ve sistem geçici klasörü her taramaya dahildir.
+  Her dosya tek bir kategoride sayılır, sembolik linkler takip edilmez.</p>
+
+  <h2>Güvenlik</h2>
+  <ul>
+    <li>Masaüstü uygulaması dosyaları <b>çöp kutusuna</b> taşır, kalıcı silmez.</li>
+    <li>Hiçbir kopya önceden seçili gelmez — aynı içerikli dosyalar çoğu zaman programların kendi dosyalarıdır.</li>
+    <li>Kullanım istatistikleri varsayılan olarak kapalıdır; açıksa bile dosya adı veya yolu gönderilmez.</li>
+  </ul>
+
+  <h2>Sunucu / terminal</h2>
+  <p>GUI'siz makineler için terminal arayüzü: <code>cleanspace-tui</code>.
+  <code>d</code> çöpe taşır, <code>D</code> kalıcı siler (sunucularda çöp kutusu yer açmaz).</p>
+
+  <h2>Kaynaktan derleme</h2>
+  <pre><code>git clone https://github.com/pelamx/cleanspace
+cd cleanspace
+cargo build --release</code></pre>
+
+  <footer>
+    Kaynak kodu ve sürümler: <a href="https://github.com/pelamx/cleanspace">github.com/pelamx/cleanspace</a>
+  </footer>
+
+</div>
+</body>
+</html>
