@@ -1,0 +1,33 @@
+[workspace]
+members = ["server"]
+
+[package]
+name = "cleanspace"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["gui", "tui"]
+gui = ["dep:eframe"]
+tui = ["dep:ratatui"]
+
+[[bin]]
+name = "cleanspace"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "cleanspace-tui"
+path = "src/bin/cleanspace-tui.rs"
+required-features = ["tui"]
+
+[dependencies]
+dirs = "6"
+eframe = { version = "0.35", optional = true }
+ratatui = { version = "0.30", optional = true }
+serde_json = "1"
+sha2 = "0.10"
+trash = "5.2.9"
+ureq = "3"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
