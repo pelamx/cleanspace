@@ -310,7 +310,7 @@ pub fn scan(
     let dup_paths: HashSet<&PathBuf> = dup_items.iter().map(|i| &i.path).collect();
     flagged.retain(|i| !dup_paths.contains(&i.path));
     items.extend(dup_items);
-    flagged.sort_by(|a, b| b.size.cmp(&a.size));
+    flagged.sort_by_key(|i| std::cmp::Reverse(i.size));
     items.extend(flagged);
     items
 }
@@ -327,9 +327,9 @@ fn snapshot(junk_dirs: &HashMap<PathBuf, u64>, flagged: &[Item]) -> Vec<Item> {
             selected: true,
         })
         .collect();
-    junk.sort_by(|a, b| b.size.cmp(&a.size));
+    junk.sort_by_key(|i| std::cmp::Reverse(i.size));
     let mut rest = flagged.to_vec();
-    rest.sort_by(|a, b| b.size.cmp(&a.size));
+    rest.sort_by_key(|i| std::cmp::Reverse(i.size));
     junk.extend(rest);
     junk
 }

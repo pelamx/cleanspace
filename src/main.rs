@@ -414,13 +414,11 @@ impl App {
         }
 
         let tab = self.tab;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{}  {}", icon(tab), tab.label()))
-                    .size(20.0)
-                    .strong(),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // Buttons first (right to left), so the title gets only the space left and truncates instead of overlapping.
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), 36.0),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
                 if ui.button("Seçimi kaldır").clicked() {
                     self.items
                         .iter_mut()
@@ -433,8 +431,14 @@ impl App {
                         .filter(|i| i.category == tab)
                         .for_each(|i| i.selected = true);
                 }
-            });
-        });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let title = RichText::new(format!("{}  {}", icon(tab), tab.label()))
+                        .size(20.0)
+                        .strong();
+                    ui.add(egui::Label::new(title).truncate());
+                });
+            },
+        );
         ui.label(RichText::new(description(tab)).color(muted));
         if let Some(phase) = self.phase {
             let text = match phase {

@@ -26,6 +26,16 @@ Her dosya tek bir kategoride listelenir, yani boyutlar iki kez sayılmaz. Sembol
 Kopyalar, eski indirmeler ve büyük dosyalar geri alınabilsin diye çöp kutusuna taşınır. Salt okunur klasörler de silinir.
 TUI'de `d` aynı kuralla temizler, `D` her şeyi kalıcı siler (sunucularda çöp kutusu yer açmaz).
 
+## İndirme
+
+[Releases](https://github.com/pelamx/cleanspace/releases) sayfasında:
+- `cleanspace-linux-x86_64.tar.gz`: masaüstü uygulaması, simgesi ve `.desktop` dosyasıyla birlikte (glibc 2.35+, yani Ubuntu 22.04, Debian 12 ve sonrası)
+- `cleanspace-tui-linux-x86_64`: statik TUI, her x86_64 Linux'ta çalışır (sunucular, cloud)
+
+```sh
+tar xzf cleanspace-linux-x86_64.tar.gz && ./cleanspace-linux-x86_64/cleanspace
+```
+
 ## Derleme
 
 ```sh
