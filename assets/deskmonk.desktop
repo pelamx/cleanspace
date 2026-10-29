@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=deskMonk by pelamx
-Comment=Akıllı depolama temizleyici
+Comment=Smart solutions
+Comment[tr]=Akıllı çözümler
+Comment[es]=Soluciones inteligentes
 Exec=deskmonk
 Icon=deskmonk
 Terminal=false

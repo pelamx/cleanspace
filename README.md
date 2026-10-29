@@ -29,12 +29,18 @@ TUI'de `d` aynı kuralla temizler, `D` her şeyi kalıcı siler (sunucularda ç�
 ## İndirme
 
 [Releases](https://github.com/pelamx/deskmonk/releases) sayfasında:
-- `deskmonk-linux-x86_64.tar.gz`: masaüstü uygulaması, simgesi ve `.desktop` dosyasıyla birlikte (glibc 2.35+, yani Ubuntu 22.04, Debian 12 ve sonrası)
-- `deskmonk-tui-linux-x86_64`: statik TUI, her x86_64 Linux'ta çalışır (sunucular, cloud)
+- `deskMonk-<sürüm>-macos.dmg`: macOS, Apple Silicon (M1–M5) ve Intel için tek uygulama (macOS 10.13+)
+- `deskMonk-<sürüm>-linux-x86_64.AppImage` / `-linux-aarch64.AppImage`: tek dosya, neredeyse her dağıtımda çalışır
+  (glibc 2.28+: Ubuntu 18.10+, Debian 10+, Fedora, RHEL/Alma/Rocky 8+, Arch, openSUSE…)
+- `deskmonk-linux-x86_64.tar.gz` / `-aarch64.tar.gz`: aynı uygulama, simgesi ve `.desktop` dosyasıyla
+- `deskmonk-windows-x86_64.zip`: Windows uygulaması ve TUI
+- `deskmonk-tui-linux-x86_64` / `-aarch64`: statik TUI, o işlemcili her Linux'ta çalışır (sunucular, cloud)
 
 ```sh
-tar xzf deskmonk-linux-x86_64.tar.gz && ./deskmonk-linux-x86_64/deskmonk
+chmod +x deskMonk-*.AppImage && ./deskMonk-*.AppImage
 ```
+
+Paketler `packaging/macos.sh` ve `packaging/linux.sh` ile yapılır; CI her `v*` etiketinde hepsini derleyip yayınlar.
 
 ## Derleme
 

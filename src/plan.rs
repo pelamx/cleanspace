@@ -7,7 +7,11 @@ use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// License server base URL, set at build time; without it (dev builds) everything is Pro.
-pub const URL: Option<&str> = option_env!("DESKMONK_LICENSE_URL");
+/// CI passes an unset repository variable as "", which counts as not set.
+pub const URL: Option<&str> = match option_env!("DESKMONK_LICENSE_URL") {
+    Some(url) if !url.is_empty() => Some(url),
+    _ => None,
+};
 
 pub const FREE_CLEAN: u64 = 2 << 30;
 pub const FREE_VAULTS: u32 = 3;
