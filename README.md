@@ -28,6 +28,14 @@ cargo build --release --no-default-features --features tui --bin cleanspace-tui 
 cargo build --release -p cleanspace-server
 ```
 
+## Masaüstü
+
+```sh
+cleanspace [KLASÖR]   # klasör verilirse açılır açılmaz taranır
+```
+Kenar çubuğunda kategoriler, üstte klasör seçimi (Gözat… / hızlı klasörler) ve özet kartları bulunur.
+Satıra tıklamak seçer, 📂 ise dosyayı klasöründe gösterir. Açık/koyu tema sistemi izler.
+
 ## TUI
 
 ```sh

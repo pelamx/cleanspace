@@ -103,9 +103,10 @@ pub fn scan(roots: &[&Path], downloads: Option<&Path>, progress: &AtomicUsize) -
         }
         groups.extend(by_hash.into_values().filter(|g| g.len() > 1));
     }
+    // Sort members first so each group's kept copy and the group order are deterministic.
+    groups.iter_mut().for_each(|g| g.sort());
     groups.sort();
-    for (i, mut group) in groups.into_iter().enumerate() {
-        group.sort();
+    for (i, group) in groups.into_iter().enumerate() {
         for (j, path) in group.into_iter().enumerate() {
             let (size, _) = files.remove(&path).unwrap();
             // Keep the first copy of every group unselected.

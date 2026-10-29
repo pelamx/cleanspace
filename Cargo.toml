@@ -8,7 +8,7 @@ edition = "2024"
 
 [features]
 default = ["gui", "tui"]
-gui = ["dep:eframe"]
+gui = ["dep:eframe", "dep:rfd"]
 tui = ["dep:ratatui"]
 
 [[bin]]
@@ -25,6 +25,7 @@ required-features = ["tui"]
 dirs = "6"
 eframe = { version = "0.35", optional = true }
 ratatui = { version = "0.30", optional = true }
+rfd = { version = "0.17.2", optional = true }
 serde_json = "1"
 sha2 = "0.10"
 trash = "5.2.9"
