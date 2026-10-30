@@ -43,7 +43,7 @@ interface Notice { message?: string; error?: string }
 export async function handleAdmin(req: Request, env: Env, path: string): Promise<Response | null> {
   if (path !== "/admin" && !path.startsWith("/admin/")) return null;
   const token = env.ADMIN_TOKEN ?? "";
-  if (token.length < 12) return new Response("ADMIN_TOKEN must be set (at least 12 characters)", { status: 500 });
+  if (token.length < 4) return new Response("ADMIN_TOKEN must be set (at least 4 characters)", { status: 500 });
   if (!(await sameSecret(req.headers.get("Authorization") ?? "", `Basic ${btoa(`admin:${token}`)}`))) {
     return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="deskMonk admin"' } });
   }
