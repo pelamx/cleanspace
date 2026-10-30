@@ -226,7 +226,7 @@ fn matcher(app: &Path) -> impl Fn(&Proc) -> bool + use<> {
 #[cfg(target_os = "linux")]
 fn matcher(app: &Path) -> impl Fn(&Proc) -> bool + use<> {
     let text = fs::read_to_string(app).unwrap_or_default();
-    let exe = exe_of(&text);
+    let exes = exes_of(&text);
     // Escaped as GNOME, KDE and Flatpak name the unit: bytes other than [A-Za-z0-9:_.] become \xNN.
     let id: String = app.file_stem().unwrap_or_default().to_string_lossy().bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b":_.".contains(&b) { (b as char).to_string() } else { format!("\\x{b:02x}") })
@@ -234,7 +234,7 @@ fn matcher(app: &Path) -> impl Fn(&Proc) -> bool + use<> {
     let snap = desktop_key(&text, "X-SnapInstanceName").map(|s| format!("snap.{s}."));
     move |(_, process, cgroup)| {
         let unit = cgroup.lines().filter_map(|l| l.rsplit('/').next()).collect::<Vec<_>>();
-        exe.as_ref() == Some(process)
+        exes.contains(process)
             || unit.iter().any(|u| {
                 u.starts_with("app-") && [format!("-{id}-"), format!("-{id}@"), format!("-{id}.scope")].iter().any(|p| u.contains(p.as_str()))
                     || snap.as_ref().is_some_and(|s| u.starts_with(s.as_str()))
@@ -289,9 +289,67 @@ fn exe_of(text: &str) -> Option<PathBuf> {
         std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(program)).find(|p| p.is_file())?
     };
     let path = fs::canonicalize(path).ok()?;
-    let base = path.file_name()?.to_string_lossy();
-    let generic = ["flatpak", "snap", "sh", "bash", "dash", "zsh", "env", "java", "perl", "node", "wine", "gio", "xdg-open", "sudo", "pkexec"];
-    (!generic.contains(&base.as_ref()) && !base.starts_with("python")).then_some(path)
+    (!is_generic(&path)).then_some(path)
+}
+
+/// A program many apps run through: matching its path would stop all of them.
+#[cfg(target_os = "linux")]
+fn is_generic(path: &Path) -> bool {
+    let base = path.file_name().unwrap_or_default().to_string_lossy();
+    let generic = ["flatpak", "snap", "sh", "bash", "dash", "zsh", "env", "java", "perl", "node", "wine", "gio", "xdg-open", "sudo", "pkexec", "dotnet", "mono", "ruby", "php"];
+    generic.contains(&base.as_ref()) || base.starts_with("python") || base.starts_with("electron")
+}
+
+/// The launcher's program, and what it turns into if it is a script: many launchers run a wrapper that
+/// execs the real program (Brave, Chrome, Signal, Spotify), so the wrapper's path is never seen running.
+#[cfg(target_os = "linux")]
+fn exes_of(text: &str) -> Vec<PathBuf> {
+    let mut exes: Vec<PathBuf> = exe_of(text).into_iter().collect();
+    let mut next = 0;
+    // Chrome goes through two scripts; the limit is only there to end a loop of scripts.
+    while next < exes.len() && next < 8 {
+        for target in exec_targets(&exes[next]) {
+            if !exes.contains(&target) {
+                exes.push(target);
+            }
+        }
+        next += 1;
+    }
+    exes
+}
+
+/// The programs a script starts: `exec /path` and `$DIR/name` beside the script, with or without exec (Brave Origin).
+/// A plain `/path` line is not followed: it may be a helper like notify-send, which other programs run too.
+/// shortcut: `exec electron app.asar` (Obsidian) is skipped, telling it apart needs the process's arguments.
+#[cfg(target_os = "linux")]
+fn exec_targets(script: &Path) -> Vec<PathBuf> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    // Read only the start: this runs on every watcher pass, and the program may be a huge binary.
+    if fs::File::open(script).and_then(|f| f.take(64 << 10).read_to_end(&mut head)).is_err() || !head.starts_with(b"#!") {
+        return Vec::new();
+    }
+    let target = |line: &str| {
+        let line = line.trim_start();
+        let exec = line.strip_prefix("exec ");
+        let mut words = exec.unwrap_or(line).split_whitespace();
+        let mut word = words.next()?;
+        while word.starts_with('-') {
+            if word == "-a" {
+                words.next();
+            }
+            word = words.next()?;
+        }
+        let word = word.trim_matches(['"', '\'']);
+        let path = match word.chars().next()? {
+            '/' if exec.is_some() => PathBuf::from(word),
+            '$' => script.parent()?.join(word.split_once('/')?.1),
+            _ => return None,
+        };
+        let path = fs::canonicalize(path).ok()?;
+        (path.is_file() && !is_generic(&path)).then_some(path)
+    };
+    String::from_utf8_lossy(&head).lines().filter_map(target).collect()
 }
 
 /// Background watcher; clones share one state.
@@ -481,6 +539,45 @@ mod tests {
         let app = dir.join("org.x.C++ IDE.desktop");
         fs::write(&app, "[Desktop Entry]\nExec=sh\n").unwrap();
         assert!(matcher(&app)(&(1, PathBuf::new(), "0::/app.slice/app-gnome-org.x.C\\x2b\\x2b\\x20IDE-9.scope\n".into())));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn follows_wrapper_scripts_but_not_into_shared_programs() {
+        let dir = std::env::temp_dir().join(format!("deskmonk-wrap-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let dir = fs::canonicalize(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.join(name);
+            fs::write(&path, text).unwrap();
+            path
+        };
+        let launcher = |script: &Path| exes_of(&format!("[Desktop Entry]\nExec=\"{}\" %U\n", script.display()));
+
+        let real = write("real", "\x7fELF");
+        let electron = write("electron43", "\x7fELF");
+        // Like Brave: an absolute path, after other shell lines.
+        let brave = write("brave", &format!("#!/bin/bash\nexport A=1\nexec {} \"$@\"\n", real.display()));
+        assert_eq!(launcher(&brave), [brave.clone(), real.clone()]);
+        // Like Chrome: script to script, with redirects, `-a` and a path beside the script.
+        let inner = write("inner", "#!/bin/bash\nexec < /dev/null\nexec > >(exec cat)\nexec 2> >(exec cat >&2)\nexec -a \"$0\" \"$HERE/real\" \"$@\"\n");
+        let outer = write("outer", &format!("#!/bin/bash\nexec {} $FLAGS \"$@\"\n", inner.display()));
+        assert_eq!(launcher(&outer), [outer.clone(), inner.clone(), real.clone()]);
+        // Like Brave Origin: no exec, the script stays around as the program's parent.
+        let plain = write("plain", "#!/bin/bash\nHERE=\"`dirname \"$0\"`\"\n[ -f \"$HERE/real\" ] || touch \"$HERE/x\"\n\"$HERE/real\" \"$@\" || true\n");
+        assert_eq!(launcher(&plain), [plain.clone(), real.clone()]);
+        // Stopping a shared program would stop every app that uses it, and a plain /path line may be such a helper.
+        for line in [format!("exec {} app.asar", electron.display()), format!("{} --notify", real.display()), "exec electron43 app.asar".into(), "exec /bin/sh -c x".into(), "exec $GDB \"$dir/real\"".into(), "exec /no/such/file".into()] {
+            let script = write("shared", &format!("#!/bin/sh\n{line}\n"));
+            assert_eq!(launcher(&script), [script.clone()], "{line}");
+        }
+        // Not a script: its text is not looked at. Scripts that exec themselves still end.
+        let binary = write("binary", &format!("\x7fELF\nexec {}\n", real.display()));
+        assert_eq!(launcher(&binary), [binary.clone()]);
+        let looping = dir.join("looping");
+        fs::write(&looping, format!("#!/bin/sh\nexec {}\n", looping.display())).unwrap();
+        assert_eq!(launcher(&looping), [looping.clone()]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
