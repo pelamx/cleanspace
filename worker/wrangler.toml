@@ -20,9 +20,9 @@ database_id = "e0bfa82a-e5c0-4b68-ade8-4c5fad7b1af2"
 
 # Secret, not here: ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN), the /admin password for user "admin".
 
-# deskMonk Pro (Paddle). "sandbox" until real sales start, then "production" with the live price IDs.
+# deskMonk Pro (Paddle, the live bubbleTranslate account; product pro_01m655e6q98g48am0eqdqfgre3).
 # Secrets, not here: PADDLE_CLIENT_TOKEN, PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET (wrangler secret put …).
 [vars]
-PADDLE_ENV = "sandbox"
-PADDLE_PRICE_MONTHLY = ""
-PADDLE_PRICE_YEARLY = ""
+PADDLE_ENV = "production"
+PADDLE_PRICE_MONTHLY = "pri_01m655mbyt5f86ptdtqpsggdza"
+PADDLE_PRICE_YEARLY = "pri_01m655nmwqf9t6zj9bakdepxb8"
