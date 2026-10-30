@@ -33,9 +33,9 @@ Go to Paddle → **Checkout → Website approval**, add `https://deskmonk.app`, 
 | Terms of service, with the seller name matching the Paddle account (Mehmet Bilen) | https://deskmonk.app/terms |
 | Privacy policy | https://deskmonk.app/privacy |
 | Refund policy (14 days) | https://deskmonk.app/refunds |
-| A way to contact you | support@deskmonk.app (forwards to your Gmail) |
+| A way to contact you | support@deskmonk.app (alias in the bubbleTranslate Google Workspace) |
 
-Approval usually takes a few working days, and Paddle may email you questions. Then set **Checkout → Checkout settings → Default payment link** to `https://deskmonk.app/buy`.
+Approval usually takes a few working days, and Paddle may email you questions. Leave **Checkout → Checkout settings → Default payment link** on bubbleTranslate's page. The account has only one, and deskMonk's checkout doesn't need it: `/buy` opens Paddle's overlay on deskmonk.app itself, which only needs the domain approved.
 
 ## 2. Catalog
 
