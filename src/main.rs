@@ -249,9 +249,11 @@ const NO_OPENGL: &str = "DESKMONK_NO_OPENGL";
 
 /// A machine where OpenGL won't start may still have Vulkan: runs once more with the default renderer.
 fn retry_without_opengl(result: &eframe::Result) {
-    if result.is_ok() || !cfg!(target_os = "linux") || std::env::var_os(NO_OPENGL).is_some() {
+    let Err(error) = result else { return };
+    if !cfg!(target_os = "linux") || std::env::var_os(NO_OPENGL).is_some() {
         return;
     }
+    eprintln!("OpenGL failed ({error}), trying the default renderer");
     let status = std::process::Command::new("/proc/self/exe").args(std::env::args_os().skip(1)).env(NO_OPENGL, "1").status();
     std::process::exit(status.ok().and_then(|s| s.code()).unwrap_or(1));
 }

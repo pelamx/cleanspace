@@ -161,8 +161,8 @@ jobs:
           # Still running after 10 s is what "starts" means: timeout's own code is 124.
           starts() {
             local code=0
-            xvfb-run -a timeout 10 "$@" > run.log 2>&1 || code=$?
-            grep -vE 'xkbcommon: ERROR|MESA' run.log | tail -5 || true
+            xvfb-run -a -s "-screen 0 1280x800x24" timeout 10 "$@" > run.log 2>&1 || code=$?
+            grep -vE 'xkbcommon: ERROR' run.log | tail -8 || true
             echo "$* exited with $code"
             test "$code" = 124 && ! grep -qE 'panicked|^Error:' run.log
           }
@@ -193,13 +193,13 @@ jobs:
           su tester -c '~/deskmonk-linux-x86_64/install.sh'
           desktop-file-validate /home/tester/.local/share/applications/deskmonk.desktop
           grep -q '^Exec=/home/tester/.local/bin/deskmonk' /home/tester/.local/share/applications/deskmonk.desktop
-          code=0; su tester -c 'cd; xvfb-run -a timeout 10 ~/.local/bin/deskmonk' > run.log 2>&1 || code=$?
+          code=0; su tester -c 'cd; xvfb-run -a -s "-screen 0 1280x800x24" timeout 10 ~/.local/bin/deskmonk' > run.log 2>&1 || code=$?
           echo "installed app exited with $code"; test "$code" = 124; ! grep -qE 'panicked|^Error:' run.log
           su tester -c '~/deskmonk-linux-x86_64/install.sh --uninstall'
           test ! -e /home/tester/.local/bin/deskmonk
           chmod +x dist/*.AppImage
           export HOME=$(mktemp -d)
-          code=0; APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 10 dist/deskMonk-*-linux-x86_64.AppImage > run.log 2>&1 || code=$?
+          code=0; APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a -s "-screen 0 1280x800x24" timeout 10 dist/deskMonk-*-linux-x86_64.AppImage > run.log 2>&1 || code=$?
           echo "AppImage exited with $code"; test "$code" = 124; ! grep -qE 'panicked|^Error:' run.log
         shell: bash
 
