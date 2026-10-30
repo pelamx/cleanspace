@@ -69,17 +69,16 @@ fn main() -> eframe::Result {
     {
         return unlock_prompt(app.into(), window_icon);
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let options = native_options(
+        egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
             .with_min_inner_size([760.0, 480.0])
             .with_title("deskMonk by pelamx")
             // Wayland compositors take the icon from the .desktop file matching this id.
             .with_app_id("deskmonk")
             .with_icon(Arc::new(window_icon)),
-        ..Default::default()
-    };
-    eframe::run_native(
+    );
+    let result = eframe::run_native(
         "deskMonk",
         options,
         Box::new(|cc| {
@@ -143,7 +142,9 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(app))
         }),
-    )
+    );
+    retry_without_opengl(&result);
+    result
 }
 
 /// Palette per theme: (window bg, sidebar/card bg, border, muted text).
@@ -167,7 +168,7 @@ fn palette(dark: bool) -> (Color32, Color32, Color32, Color32) {
 
 /// Keeps the input method out of this frame's text fields. On Linux, with one running (fcitx5, ibus), a focused field and
 /// the input method keep waking each other, which redraws without end, lags, and loses or repeats keys.
-/// It should not see passwords either. shortcut: no CJK input in these fields on Linux, add it back when that loop is gone.
+/// It should not see passwords either. shortcut: no CJK input on Linux, add it back when that loop is gone.
 fn no_input_method(ctx: &egui::Context) {
     if cfg!(target_os = "linux") {
         ctx.output_mut(|o| o.ime = None);
@@ -232,17 +233,39 @@ impl eframe::App for UnlockPrompt {
     }
 }
 
+/// On Linux: OpenGL without vsync. With Vulkan and vsync, a repaint while the window is on another Wayland workspace
+/// spins a whole CPU core in the driver and stops the app's code until the window is shown again.
+/// egui only draws when something changes, so no vsync does not mean more drawing.
+fn native_options(viewport: egui::ViewportBuilder) -> eframe::NativeOptions {
+    let mut options = eframe::NativeOptions { viewport, ..Default::default() };
+    if cfg!(target_os = "linux") && std::env::var_os(NO_OPENGL).is_none() {
+        options.renderer = eframe::Renderer::Glow;
+        options.glow_options.vsync = false;
+    }
+    options
+}
+
+const NO_OPENGL: &str = "DESKMONK_NO_OPENGL";
+
+/// A machine where OpenGL won't start may still have Vulkan: runs once more with the default renderer.
+fn retry_without_opengl(result: &eframe::Result) {
+    if result.is_ok() || !cfg!(target_os = "linux") || std::env::var_os(NO_OPENGL).is_some() {
+        return;
+    }
+    let status = std::process::Command::new("/proc/self/exe").args(std::env::args_os().skip(1)).env(NO_OPENGL, "1").status();
+    std::process::exit(status.ok().and_then(|s| s.code()).unwrap_or(1));
+}
+
 fn unlock_prompt(app: PathBuf, icon: egui::IconData) -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let options = native_options(
+        egui::ViewportBuilder::default()
             .with_inner_size([376.0, 380.0])
             .with_resizable(false)
             .with_title("deskMonk")
             .with_app_id("deskmonk")
             .with_icon(Arc::new(icon)),
-        ..Default::default()
-    };
-    eframe::run_native(
+    );
+    let result = eframe::run_native(
         "deskMonk",
         options,
         Box::new(|cc| {
@@ -250,7 +273,9 @@ fn unlock_prompt(app: PathBuf, icon: egui::IconData) -> eframe::Result {
             let name = applock::name(&app);
             Ok(Box::new(UnlockPrompt { app, name, lock: applock::Config::load(), icons: Icons { budget: 1, ..Default::default() }, pw: String::new(), error: String::new(), opened: Instant::now() }))
         }),
-    )
+    );
+    retry_without_opengl(&result);
+    result
 }
 
 fn setup_style(ctx: &egui::Context) {
@@ -739,6 +764,7 @@ impl App {
                                         .add_enabled(
                                             !scanning,
                                             egui::Button::new(RichText::new(name).small())
+                                                .wrap_mode(egui::TextWrapMode::Extend)
                                                 .min_size(vec2(0.0, 32.0)),
                                         )
                                         .clicked()
@@ -1485,11 +1511,19 @@ impl App {
     fn license_strip(&mut self, ui: &mut Ui) {
         card(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(t("🔑 Lisans anahtarım var", "🔑 Have a license key?", "🔑 ¿Tiene una clave de licencia?")).strong());
+            let heading = RichText::new(t("🔑 Lisans anahtarım var", "🔑 Have a license key?", "🔑 ¿Tiene una clave de licencia?")).strong();
+            // In a half-screen window the heading would leave the field too narrow to read a key.
+            if ui.available_width() < 520.0 {
+                ui.label(heading);
                 ui.add_space(6.0);
                 self.key_form(ui);
-            });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(heading);
+                    ui.add_space(6.0);
+                    self.key_form(ui);
+                });
+            }
         });
         ui.add_space(12.0);
     }
@@ -2642,12 +2676,15 @@ impl eframe::App for App {
                                 }
                             }
                         }
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(t("Akıllı çözümler", "Smart solutions", "Soluciones inteligentes"))
-                                .small()
-                                .color(muted),
-                        );
+                        // Left out when only a cut-off piece of it would fit.
+                        if ui.available_width() > 150.0 {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(t("Akıllı çözümler", "Smart solutions", "Soluciones inteligentes"))
+                                    .small()
+                                    .color(muted),
+                            );
+                        }
                     });
                 });
             });
@@ -2833,10 +2870,7 @@ impl eframe::App for App {
                 });
             });
         }
-        // The contact form is free text in any language; every other field here is a path, a key or a password.
-        if !self.contact_open {
-            no_input_method(&ctx);
-        }
+        no_input_method(&ctx);
     }
 }
 

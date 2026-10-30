@@ -34,13 +34,15 @@ const ORDER_REVEAL = 2 * 86400;
 
 /** Returns a response for license routes, or null for any other path. */
 export async function handleLicense(req: Request, env: LicenseEnv, path: string): Promise<Response | null> {
-  if (req.method === "GET" && path === "/buy") return buy(req, env);
-  if (req.method === "GET" && path === "/welcome") {
+  // HEAD as GET: uptime monitors and link checkers ask that way; the runtime leaves out the body.
+  const read = req.method === "GET" || req.method === "HEAD";
+  if (read && path === "/buy") return buy(req, env);
+  if (read && path === "/welcome") {
     const ref = new URL(req.url).searchParams.get("ref") ?? "";
     return REF.test(ref) ? welcomePage(req, pickLang(req), ref) : Response.redirect(new URL("/buy", req.url).toString(), 302);
   }
   if (req.method === "GET" && path.startsWith("/api/order/")) return order(env.DB, path.slice("/api/order/".length));
-  if (path === "/account" && (req.method === "GET" || req.method === "POST")) return account(req, env);
+  if (path === "/account" && (read || req.method === "POST")) return account(req, env);
   if (req.method === "POST" && path === "/account/portal") return accountPortal(req, env);
   if (req.method === "POST" && path === "/api/paddle") return webhook(req, env);
   if (req.method === "POST" && (path === "/api/license/validate" || path === "/api/license/portal" || path === "/api/license/deactivate")) {
@@ -336,7 +338,7 @@ async function formKey(req: Request): Promise<string> {
 
 async function account(req: Request, env: LicenseEnv): Promise<Response> {
   const lang = pickLang(req);
-  if (req.method === "GET") return accountPage(req, lang, null);
+  if (req.method !== "POST") return accountPage(req, lang, null);
   const key = await formKey(req);
   const sub =
     key === ""

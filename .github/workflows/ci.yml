@@ -122,10 +122,75 @@ jobs:
           name: tui-${{ matrix.target }}
           path: dist/*
 
+  # Installs the real packages on other distros and starts the app and the password prompt, so a missing dependency
+  # is found here and not by a user. deskmonk.app points nowhere: these runs must not count as installs in /admin.
+  linux-install:
+    needs: linux
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:22.04
+            install: apt-get update -qq && apt-get install -y -qq ./dist/deskmonk_*_amd64.deb xvfb xauth libgl1-mesa-dri
+          - image: ubuntu:24.04
+            install: apt-get update -qq && apt-get install -y -qq ./dist/deskmonk_*_amd64.deb xvfb xauth libgl1-mesa-dri
+          - image: debian:12
+            install: apt-get update -qq && apt-get install -y -qq ./dist/deskmonk_*_amd64.deb xvfb xauth libgl1-mesa-dri
+          - image: fedora:latest
+            install: dnf install -y -q ./dist/deskmonk-*.x86_64.rpm xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers which
+          - image: rockylinux:9
+            install: dnf install -y -q ./dist/deskmonk-*.x86_64.rpm xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers which
+          - image: rockylinux:8
+            install: dnf install -y -q ./dist/deskmonk-*.x86_64.rpm xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers which
+          - image: opensuse/tumbleweed
+            install: zypper --non-interactive --no-gpg-checks install ./dist/deskmonk-*.x86_64.rpm xvfb-run xauth Mesa-dri which
+          - image: archlinux:latest
+            install: pacman -Sy --noconfirm --needed xorg-server-xvfb xorg-xauth mesa which && pacman -U --noconfirm ./dist/deskmonk-*-x86_64.pkg.tar.zst
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-X64
+          path: dist
+      - run: ${{ matrix.install }}
+      - name: The app and the password prompt start and keep running
+        run: |
+          echo "127.0.0.1 deskmonk.app" >> /etc/hosts
+          export HOME=$(mktemp -d)
+          # Still running after 10 s is what "starts" means: timeout's own code is 124.
+          set +e; xvfb-run -a timeout 10 deskmonk; code=$?; set -e; test "$code" = 124
+          set +e; xvfb-run -a timeout 10 deskmonk --unlock-prompt /nonexistent.desktop; code=$?; set -e; test "$code" = 124
+          deskmonk-tui --key 2>&1 | grep -q deskmonk-tui
+        shell: bash
+
+  # The plain archive and the AppImage, without any package manager help.
+  linux-archives:
+    needs: linux
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-X64
+          path: dist
+      - run: apt-get update -qq && apt-get install -y -qq xvfb xauth libgl1-mesa-dri libx11-xcb1 libxcursor1 libxrandr2 libxi6 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1 desktop-file-utils
+      - name: The archive installs into the menu and starts; the AppImage starts
+        run: |
+          echo "127.0.0.1 deskmonk.app" >> /etc/hosts
+          export HOME=$(mktemp -d)
+          tar xzf dist/deskmonk-linux-x86_64.tar.gz -C "$HOME"
+          "$HOME/deskmonk-linux-x86_64/install.sh"
+          desktop-file-validate "$HOME/.local/share/applications/deskmonk.desktop"
+          set +e; xvfb-run -a timeout 10 "$HOME/.local/bin/deskmonk"; code=$?; set -e; test "$code" = 124
+          chmod +x dist/*.AppImage
+          set +e; APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 10 dist/deskMonk-*-linux-x86_64.AppImage; code=$?; set -e; test "$code" = 124
+        shell: bash
+
   # A version tag (v0.4.0) publishes everything above as one GitHub release.
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [test, macos, linux, windows, tui-musl]
+    needs: [test, macos, linux, linux-install, linux-archives, windows, tui-musl]
     runs-on: ubuntu-latest
     steps:
       # Without the license server the apps unlock Pro for everyone; without telemetry nothing is counted.

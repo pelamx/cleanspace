@@ -243,3 +243,18 @@ test("refund: the last completed payment in full, then cancel at once", async ()
     globalThis.fetch = real;
   }
 });
+
+test("buy and account pages answer HEAD like GET, for uptime monitors", async () => {
+  const env = { DB: {}, PADDLE_CLIENT_TOKEN: "t", PADDLE_PRICE_MONTHLY: "m", PADDLE_PRICE_YEARLY: "y" } as any;
+  for (const path of ["/buy", "/account"]) {
+    const res = await handleLicense(new Request(`https://deskmonk.app${path}`, { method: "HEAD" }), env, path);
+    expect(res?.status).toBe(200);
+  }
+});
+
+test("the key mail points at the field in the app, not at the checkout", () => {
+  const { text } = keyMail("DM-AAAA-BBBB-CCCC", "monthly");
+  expect(text).toContain("DM-AAAA-BBBB-CCCC");
+  expect(text).toContain("Have a license key?");
+  expect(text).not.toContain("Get Pro");
+});

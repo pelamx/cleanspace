@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "deskmonk"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -1261,6 +1261,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",

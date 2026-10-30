@@ -44,8 +44,8 @@ export function keyMail(key: string, plan: string): { subject: string; text: str
 
 Your license key: ${key}
 
-On the computer you bought it from, Pro is already on.
-On another computer (up to 3 in total): open deskMonk, click "Get Pro", paste the key under "Have a license key?" and click Activate.
+To activate: open deskMonk, paste the key into "Have a license key?" at the top of the window and click Activate. It works on up to 3 computers.
+If you bought from inside deskMonk, that computer has already turned Pro by itself.
 In the terminal version, press p and type the key.
 
 See your plan, or change or cancel the subscription: https://deskmonk.app/account
