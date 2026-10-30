@@ -25,6 +25,8 @@ header.site .wrap { display: flex; align-items: center; gap: 18px; padding-top: 
 header.site nav { margin-inline-start: auto; display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
 header.site nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
 header.site nav a:hover { color: var(--text); }
+header.site nav a.nav-dl { color: #fff; font-weight: 600; padding: 6px 14px; border-radius: 999px; background: linear-gradient(135deg, var(--brand), var(--brand-2)); box-shadow: 0 6px 18px rgba(108,99,255,.35); }
+header.site nav a.nav-dl::before { content: "↓ "; }
 select.langs { font: inherit; font-size: 14px; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 999px;
   padding: 5px 12px; cursor: pointer; max-width: 170px; }
 select.langs:focus { outline: none; border-color: var(--brand); }
