@@ -125,6 +125,11 @@ jobs:
           echo "Set it under Settings → Secrets and variables → Actions → Variables, then push the tag again."
           echo "Shipping free on purpose? Delete this step."
           exit 1
+      # Not fatal: a build with no telemetry is a legitimate choice. But the admin panel is fed
+      # only by these events, so without it every figure there stays at zero for this release.
+      - name: Warn when the release reports no usage at all
+        if: vars.DESKMONK_TELEMETRY_URL == ''
+        run: echo "::warning::DESKMONK_TELEMETRY_URL is empty: this release sends nothing, so /admin will show zero installs for it."
       - uses: actions/download-artifact@v4
         with:
           path: dist

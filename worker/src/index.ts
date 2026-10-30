@@ -215,19 +215,48 @@ async function cards(db: D1Database, sql: string, args: unknown[], labels: strin
 
 async function overviewPage(db: D1Database): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const [week, month] = [now - 7 * DAY, now - 30 * DAY];
+  const [week, month, day, live] = [now - 7 * DAY, now - 30 * DAY, now - DAY, now - 900];
   let body = "<h1>deskMonk by pelamx — Admin</h1><div class=muted>Anonim kullanım istatistikleri</div>";
   body += await cards(
     db,
     `SELECT COUNT(DISTINCT install_id),
+            COUNT(DISTINCT CASE WHEN ts >= ?4 THEN install_id END),
+            COUNT(DISTINCT CASE WHEN ts >= ?3 THEN install_id END),
             COUNT(DISTINCT CASE WHEN ts >= ?1 THEN install_id END),
             COUNT(DISTINCT CASE WHEN ts >= ?2 THEN install_id END),
             SUM(kind='scan'), SUM(kind='clean'),
             SUM(CASE WHEN kind='scan' THEN bytes END), SUM(CASE WHEN kind='clean' THEN bytes END),
             SUM(CASE WHEN kind='clean' THEN files END), SUM(kind='open')
      FROM events`,
-    [week, month],
-    ["Toplam kullanıcı", "Aktif (7 gün)", "Aktif (30 gün)", "Tarama", "Temizleme", "Bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya", "Uygulama açılışı"],
+    [week, month, day, live],
+    [
+      "Kurulum (toplam)", "Şu an açık (15 dk)", "Son 24 saat", "Aktif (7 gün)", "Aktif (30 gün)",
+      "Tarama", "Temizleme", "Bulunan alan (boyut)", "Kazanılan alan (boyut)", "Silinen dosya", "Uygulama açılışı",
+    ],
+  );
+  // Pro: the subscriptions table was never shown here, so sales were invisible from the panel.
+  // "Pro (aktif)" counts the same way the app does — a paid period that has not run out yet.
+  body += "<h2>Pro</h2>";
+  body += await cards(
+    db,
+    `SELECT COUNT(*),
+            SUM(CASE WHEN status IN ('active','trialing','past_due') AND period_end > ?1 THEN 1 ELSE 0 END),
+            SUM(status='trialing'), SUM(status='past_due'), SUM(status='canceled'),
+            (SELECT COUNT(*) FROM activations),
+            (SELECT COUNT(DISTINCT license_key) FROM activations)
+     FROM subscriptions`,
+    [now],
+    ["Abonelik (toplam)", "Pro (aktif)", "Deneme", "Ödemesi gecikmiş", "İptal", "Etkin cihaz", "Kullanılan lisans"],
+  );
+  body += await table(
+    db,
+    "Abonelikler (son 200)",
+    `SELECT s.customer_id, s.status, datetime(s.period_end,'unixepoch'),
+            (SELECT COUNT(*) FROM activations a WHERE a.license_key = s.license_key)
+     FROM subscriptions s ORDER BY s.period_end DESC LIMIT 200`,
+    [],
+    ["Müşteri", "Durum", "Dönem sonu", "Cihaz"],
+    false,
   );
   const groupBy = (col: string) =>
     `SELECT ${col}, COUNT(DISTINCT install_id), SUM(kind='scan'), SUM(kind='clean'),
