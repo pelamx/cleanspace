@@ -21,7 +21,8 @@ const MAX_BODY = 16384;
 const MAX_SPECS = 40;
 const MAX_SPEC_TEXT = 200;
 const SIZE_FIELDS = ["bytes", "duplicate_bytes", "junk_bytes", "old_download_bytes", "large_bytes"] as const;
-const KINDS = ["scan", "clean", "open", "vault", "focus", "pro", "bought"];
+// "ping": the phone apps' heartbeat while on screen, for the admin panel's "live now". "applock": an app was locked (phones).
+const KINDS = ["scan", "clean", "open", "vault", "focus", "pro", "bought", "ping", "applock"];
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -130,7 +131,7 @@ export function parseEvent(body: string): Event {
     sizes,
     specs,
     plan: optional("plan", /^(free|pro)$/),
-    channel: optional("channel", /^(web|appstore)$/),
+    channel: optional("channel", /^(web|appstore|playstore)$/),
     detail: optional("detail", /^[a-z_]{1,24}$/),
   };
 }

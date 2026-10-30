@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS events(
     id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL,
     os TEXT NOT NULL, client TEXT NOT NULL, kind TEXT NOT NULL, files INTEGER NOT NULL, bytes INTEGER NOT NULL,
     duplicate_bytes INTEGER NOT NULL, junk_bytes INTEGER NOT NULL, old_download_bytes INTEGER NOT NULL, large_bytes INTEGER NOT NULL,
-    -- country: Cloudflare's guess from the IP (the IP itself is never stored); plan free|pro; channel web|appstore;
+    -- country: Cloudflare's guess from the IP (the IP itself is never stored); plan free|pro; channel web|appstore|playstore;
     -- detail: what a "vault"/"pro"/"bought" event was about. NULL on events from apps older than 0.4.
     country TEXT, plan TEXT, channel TEXT, detail TEXT);
 CREATE INDEX IF NOT EXISTS events_install ON events(install_id, ts);

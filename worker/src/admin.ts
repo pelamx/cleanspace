@@ -1,6 +1,7 @@
 //! The operator's panel at /admin (HTTP Basic auth: user "admin", password = ADMIN_TOKEN secret).
 //! GET  /admin                 analytics + subscriptions; ?q= searches subscriptions
 //! GET  /admin/user/<id>       one installation: usage, hardware, licenses, every event
+//! GET  /admin/mobile-live     the Mobile card's live part, refetched by the page
 //! GET  /admin/export.csv      ?what=installs|subscriptions
 //! POST /admin/mine            mark an installation as the operator's own (left out of every count)
 //! POST /admin/issue           a Pro license nobody paid for (press, support, testers)
@@ -18,11 +19,18 @@ const TZ = 3 * 3600;
 /** USD list prices (i18n.ts); Paddle's own figures are in its dashboard. */
 const PRICE = USD;
 const OSES = ["macos", "windows", "linux"];
+const MOBILE = ["ios", "android"];
+/** A phone counts as live while its heartbeat keeps arriving: every 4 minutes on screen (telemetry.dart in the app). */
+const LIVE = 300;
+/** Phone events minus the operator's own installations, and each installation's first and last event. */
+const MO = "mo AS (SELECT * FROM events WHERE os IN ('ios', 'android') AND install_id NOT IN (SELECT install_id FROM ignored_installs))";
+const MO_F = "f AS (SELECT install_id, MAX(os) AS os, MIN(ts) AS first, MAX(ts) AS last FROM mo GROUP BY install_id)";
+const STORE_NAME: Record<string, string> = { appstore: "App Store", playstore: "Google Play" };
 /** Events minus the operator's own installations. */
 const EV = "ev AS (SELECT * FROM events WHERE install_id NOT IN (SELECT install_id FROM ignored_installs))";
 const KIND_LABEL: Record<string, string> = {
   Bilgisayar: "Computer", Sistem: "System", "İşlemci": "Processor", Bellek: "Memory", "Ekran kartı": "Graphics",
-  Ekran: "Display", Depolama: "Storage", "Disk alanı": "Disk space", Pil: "Battery",
+  Ekran: "Display", Depolama: "Storage", "Disk alanı": "Disk space", Pil: "Battery", Telefon: "Phone", "Tür": "Type",
 };
 
 type Row = Record<string, any>;
@@ -42,6 +50,7 @@ export async function handleAdmin(req: Request, env: Env, path: string): Promise
     if (path === "/admin") return html(await dashboard(env, url.searchParams.get("q")?.trim() ?? "", {}));
     if (path.startsWith("/admin/user/")) return html(await userPage(env.DB, decodeURIComponent(path.slice("/admin/user/".length))));
     if (path === "/admin/export.csv") return exportCsv(env.DB, url.searchParams.get("what") ?? "");
+    if (path === "/admin/mobile-live") return html(mobileLive(await mobileLiveData(env.DB, now()), now()));
     return new Response("Not found", { status: 404 });
   }
   if (req.method !== "POST") return new Response("Not found", { status: 404 });
@@ -235,6 +244,8 @@ async function usersQuery(db: D1Database, since: number, limit: number): Promise
               ${latest("plan")} AS plan, ${latest("channel")} AS channel, group_concat(DISTINCT e.client) AS client,
               (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
                 WHERE h.install_id = e.install_id AND json_extract(s.value, '$.kind') = 'İşlemci' LIMIT 1) AS cpu,
+              (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
+                WHERE h.install_id = e.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone,
               MIN(e.ts) AS first_seen, MAX(e.ts) AS last_seen, SUM(e.kind = 'open') AS opens, SUM(e.kind = 'scan') AS scans,
               SUM(e.kind = 'clean') AS cleans, SUM(CASE WHEN e.kind = 'clean' THEN e.bytes ELSE 0 END) AS freed,
               SUM(e.kind = 'vault') AS vault, SUM(e.kind = 'focus') AS focus, SUM(e.kind = 'pro') AS pro_views,
@@ -303,6 +314,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   const [installs, active, series, mineOs, plans, features, countries, space, versions, clients, brands, daily, subsAll, log] =
     results.map((r) => (r.results ?? []) as Row[]);
   const users = await usersQuery(db, month, 500);
+  const [mobileNow, mobile] = await Promise.all([mobileLiveData(db, t), mobileData(db, t)]);
 
   const sum = (rows: Row[], f: string) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
   const byOs = (rows: Row[], f: string) => Object.fromEntries(rows.map((r) => [r.os, Number(r[f]) || 0]));
@@ -315,6 +327,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   const livePaddle = paddleSubs.filter(live);
   const liveManual = subsAll.filter((s) => s.customer_id === "manual" && live(s));
   const appstorePro = plans.filter((p) => p.channel === "appstore" && p.plan === "pro").reduce((a, p) => a + p.n, 0);
+  const playstorePro = plans.filter((p) => p.channel === "playstore" && p.plan === "pro").reduce((a, p) => a + p.n, 0);
   const proInstalls = plans.filter((p) => p.plan === "pro").reduce((a, p) => a + p.n, 0);
   const freeInstalls = plans.filter((p) => p.plan === "free").reduce((a, p) => a + p.n, 0);
   const monthly = livePaddle.filter((s) => s.plan !== "yearly").length;
@@ -323,8 +336,9 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   const ending = subsAll.filter((s) => live(s) && s.period_end <= t + 7 * DAY);
   const newPaddle = (from: number, to = Infinity) => paddleSubs.filter((s) => (s.created_at ?? 0) >= from && (s.created_at ?? 0) < to).length;
   const bought = featureAll("bought");
-  const appstoreToday = sum(bought, "today");
-  const appstoreYesterday = sum(bought, "yesterday");
+  const playstoreToday = feature("bought", "playstore").today ?? 0;
+  const storeToday = sum(bought, "today");
+  const storeYesterday = sum(bought, "yesterday");
 
   // Users and counts
   const real = users.filter((u) => !u.mine).length;
@@ -346,6 +360,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
 
   const nav = [
     ["overview", "grid", "Overview", ""],
+    ["mobile", "phone", "Mobile", ""],
     ["analytics", "chart", "Analytics", ""],
     ["users", "users", "Users", count(real)],
     ["subscriptions", "key", "Subscriptions", ending.length ? count(ending.length, "warn") : count(livePaddle.length + liveManual.length)],
@@ -381,9 +396,9 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
         value: sum(active, "today"), extra: delta(sum(active, "today"), sum(active, "yesterday")), rows: osBars(byOs(active, "today")) })}
       ${tile({ icon: "broom", tone: "t-green", title: "Space freed", hint: "Cleaned by everyone today",
         value: humanSize(sum(active, "cleaned_today")), extra: deltaText(humanSize(sum(active, "cleaned_yesterday"))), rows: osBars(byOs(active, "cleaned_today"), humanSize) })}
-      ${tile({ icon: "cart", tone: "t-red", title: "New Pro customers", hint: "Paddle + App Store",
-        value: newPaddle(today) + appstoreToday, extra: delta(newPaddle(today) + appstoreToday, newPaddle(yesterday, today) + appstoreYesterday),
-        rows: bars3([["Paddle", newPaddle(today), "web"], ["App Store", appstoreToday, "store"]]) })}
+      ${tile({ icon: "cart", tone: "t-red", title: "New Pro customers", hint: "Paddle + app stores",
+        value: newPaddle(today) + storeToday, extra: delta(newPaddle(today) + storeToday, newPaddle(yesterday, today) + storeYesterday),
+        rows: bars3([["Paddle", newPaddle(today), "web"], ["App Store", storeToday - playstoreToday, "store"], ["Google Play", playstoreToday, "play"]]) })}
     </div>
     ${places(countries)}
   </section>
@@ -391,8 +406,8 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   <section class="card">
     <p class="label">Overall</p>
     <div class="grid five">
-      ${tile({ icon: "star", tone: "t-orange", title: "Pro now", value: livePaddle.length + liveManual.length + appstorePro,
-        rows: bars3([["Paddle", livePaddle.length, "web"], ["App Store", appstorePro, "store"], ["Manual", liveManual.length, "manual"]]),
+      ${tile({ icon: "star", tone: "t-orange", title: "Pro now", value: livePaddle.length + liveManual.length + appstorePro + playstorePro,
+        rows: bars3([["Paddle", livePaddle.length, "web"], ["App Store", appstorePro, "store"], ["Google Play", playstorePro, "play"], ["Manual", liveManual.length, "manual"]]),
         foot: `${monthly} monthly · ${yearly} yearly on Paddle`, footIcon: "calendar" })}
       ${tile({ icon: "bars", tone: "t-violet", title: "Active this week", value: sum(active, "week"), rows: osBars(byOs(active, "week")),
         foot: `${freeInstalls} free · ${proInstalls} Pro (last 30 days)`, footIcon: "users" })}
@@ -410,6 +425,8 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   </section>
   </div>
 
+  <div class="zone" id="mobile">${mobileLive(mobileNow, t)}${mobileCard(mobile, versions, t)}</div>
+
   <div class="zone" id="analytics">
   <section class="card">
     <p class="label">Features, last 30 days</p>
@@ -423,7 +440,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
         ["Vault: open", feature("vault", "open"), ""],
         ["Monk mode: focus finished", feature("focus"), ""],
         ["Pro dialog opened", merge(featureAll("pro")), ""],
-        ["App Store purchase", merge(bought), ""],
+        ["App store purchase", merge(bought), ""],
       ]
         .map(([label, r, extra]: any) => `<tr><td>${label}</td><td class="num">${r.n ?? 0}</td><td class="num">${r.users ?? 0}</td>
           <td class="num">${r.week ?? 0}</td><td class="num">${r.today ?? 0}</td><td class="muted">${extra}</td></tr>`)
@@ -441,7 +458,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
       ]
         .map(([label, d]) => { const r = feature("pro", d); return `<tr><td>${label}</td><td class="num">${r.n ?? 0}</td><td class="num">${r.users ?? 0}</td></tr>`; })
         .join("")}
-      <tr class="total"><td>Bought Pro (Paddle + App Store)</td><td class="num">${newPaddle(month) + sum(bought, "n")}</td>
+      <tr class="total"><td>Bought Pro (Paddle + app stores)</td><td class="num">${newPaddle(month) + sum(bought, "n")}</td>
         <td class="num">${ratio(newPaddle(month) + sum(bought, "n"), sum(featureAll("pro"), "users"))} of installs that saw the dialog</td></tr>
     </table></div>
   </section>
@@ -450,7 +467,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="label">Growth &amp; retention</p>
     <div class="scroll"><table>
       <tr><th>Platform</th><th class="num">Installs</th><th>Came back next day</th><th>Still using after a week</th><th class="num">Lost</th></tr>
-      ${[...OSES.map((os) => installs.find((r) => r.os === os) ?? { os }), totalRow(installs)]
+      ${[...[...OSES, ...MOBILE].map((os) => installs.find((r) => r.os === os) ?? { os }), totalRow(installs)]
         .map((r) => `<tr${r.os === "all" ? ' class="total"' : ""}><td>${osName(r.os)}</td><td class="num">${r.total ?? 0}</td>
           <td>${ratio(r.day_back ?? 0, r.day_base ?? 0)}</td><td>${ratio(r.week_back ?? 0, r.week_base ?? 0)}</td><td class="num">${r.lost ?? 0}</td></tr>`)
         .join("")}
@@ -458,24 +475,11 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="muted foot"><b>Came back / still using</b>: of the installs old enough to tell, how many were seen again at least a day / a week after their first event.
       <b>Lost</b>: used in the last 30 days, but not in the last 7.</p>
 
-    <p class="label" style="margin-top:22px">Versions in use, last 30 days <span class="aside">· each installation once, at the version it runs now</span></p>
-    <div class="scroll"><table>
-      <tr><th>Version</th>${OSES.map((os) => `<th class="num">${osName(os)}</th>`).join("")}<th class="num">Total</th><th>Share</th><th>Updates itself</th></tr>
-      ${[...new Set(versions.map((v) => v.version))].sort(compareVersions)
-        .map((v, i) => {
-          const n = (os: string) => versions.filter((r) => r.version === v && r.os === os).reduce((a, r) => a + r.n, 0);
-          const total = versions.filter((r) => r.version === v).reduce((a, r) => a + r.n, 0);
-          const share = Math.round((total / Math.max(1, sum(versions, "n"))) * 100);
-          // The self-updater came with 0.5.0; older copies only update by a manual download.
-          const updates = compareVersions(v, "0.5.0") <= 0 ? "yes" : '<span class="badge warn">no, download by hand</span>';
-          return `<tr><td>${esc(v)}${i === 0 ? ' <span class="badge new">newest</span>' : ""}</td>${OSES.map((os) => `<td class="num">${n(os) || '<span class="muted">0</span>'}</td>`).join("")}
-            <td class="num"><b>${total}</b></td><td class="num">${share}%</td><td>${updates}</td></tr>`;
-        })
-        .join("") || `<tr><td colspan="7" class="muted">No installs this month.</td></tr>`}
-    </table></div>
+    <p class="label" style="margin-top:22px">Desktop versions in use, last 30 days <span class="aside">· each installation once, at the version it runs now</span></p>
+    ${versionTable(versions, OSES, true)}
     <p class="muted foot"><b>Updates itself</b>: Macs now; Windows and Linux once their builds are listed in deskmonk.app/update.json.</p>
     <p class="muted foot">Interface: ${clients.map((c) => `${esc(c.client === "tui" ? "terminal" : c.client === "gui" ? "desktop" : c.client)} <b>${c.n}</b>`).join(" · ") || "—"}
-      · Store: web ${sum(plans.filter((p) => p.channel === "web"), "n")} · App Store ${sum(plans.filter((p) => p.channel === "appstore"), "n")}</p>
+      · Store: web ${sum(plans.filter((p) => p.channel === "web"), "n")} · App Store ${sum(plans.filter((p) => p.channel === "appstore"), "n")} · Google Play ${sum(plans.filter((p) => p.channel === "playstore"), "n")}</p>
   </section>
 
   <section class="card">
@@ -552,8 +556,8 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
       </form>
       ${subGroup("Paddle", "paddle", matches.filter((s) => s.customer_id !== "manual"), t, !!query)}
       ${subGroup("Issued by hand", "manual", matches.filter((s) => s.customer_id === "manual"), t, !!query)}
-      <p class="muted foot">Refund (under Manage) gives back a subscription's last payment and cancels it; Paddle's webhook updates this list. App Store subscriptions are Apple's and
-        appear only in the counts above (Pro installs on the App Store version).</p>
+      <p class="muted foot">Refund (under Manage) gives back a subscription's last payment and cancels it; Paddle's webhook updates this list. App Store and Google Play
+        subscriptions belong to Apple and Google and appear only in the counts above (Pro installs on those versions).</p>
     </div>
   </details>
   </div>
@@ -565,6 +569,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
       ${stat("Yearly run rate", usd(mrr * 12), "MRR × 12")}
       ${stat("Live subscriptions", String(livePaddle.length), `${paddleSubs.filter((s) => s.status === "canceled").length} canceled all time`)}
       ${stat("App Store Pro installs", String(appstorePro), "Apple pays out; see App Store Connect")}
+      ${stat("Google Play Pro installs", String(playstorePro), "Google pays out; see Play Console")}
     </div>
     <p class="label" style="margin-top:20px">By month</p>
     <div class="scroll"><table>
@@ -602,12 +607,211 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   </div>
   </main>
   </div>
-  <script>${SHELL_SCRIPT}</script>`;
+  <script>${SHELL_SCRIPT}</script>
+  <script>setInterval(async () => { if (document.hidden) return; try { const r = await fetch("/admin/mobile-live"); if (r.ok) document.getElementById("mobile-live").outerHTML = await r.text(); } catch {} }, 30000);</script>`;
   return layout("Admin — deskMonk", body);
 }
 
 function merge(rows: Row[]): Row {
   return ["n", "users", "week", "today"].reduce((acc, k) => ({ ...acc, [k]: rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) }), {} as Row);
+}
+
+/** Each installation once, at its current version. `selfUpdates`: desktop only; the stores update the phone apps. */
+function versionTable(versions: Row[], oses: string[], selfUpdates = false): string {
+  const rows = versions.filter((r) => oses.includes(r.os));
+  const n = (v: string, os?: string) => rows.filter((r) => r.version === v && (!os || r.os === os)).reduce((a, r) => a + r.n, 0);
+  const all = Math.max(1, rows.reduce((a, r) => a + r.n, 0));
+  return `<div class="scroll"><table>
+      <tr><th>Version</th>${oses.map((os) => `<th class="num">${osName(os)}</th>`).join("")}<th class="num">Total</th><th class="num">Share</th>${selfUpdates ? "<th>Updates itself</th>" : ""}</tr>
+      ${[...new Set(rows.map((r) => r.version))].sort(compareVersions)
+        .map((v, i) => {
+          // The self-updater came with 0.5.0; older copies only update by a manual download.
+          const updates = compareVersions(v, "0.5.0") <= 0 ? "yes" : '<span class="badge warn">no, download by hand</span>';
+          return `<tr><td>${esc(v)}${i === 0 ? ' <span class="badge new">newest</span>' : ""}</td>${oses.map((os) => `<td class="num">${n(v, os) || '<span class="muted">0</span>'}</td>`).join("")}
+            <td class="num"><b>${n(v)}</b></td><td class="num">${Math.round((n(v) / all) * 100)}%</td>${selfUpdates ? `<td>${updates}</td>` : ""}</tr>`;
+        })
+        .join("") || `<tr><td colspan="${oses.length + 3 + (selfUpdates ? 1 : 0)}" class="muted">No installs this month.</td></tr>`}
+    </table></div>`;
+}
+
+// ---------- mobile ----------
+
+interface MobileNow { counts: Row[]; recent: Row[] }
+interface MobileData { lifecycle: Row[]; usage: Row[]; features: Row[]; active: Row[]; fresh: Row[]; phones: Row[]; countries: Row[]; types: Row[] }
+
+async function mobileLiveData(db: D1Database, t: number): Promise<MobileNow> {
+  const today = Math.floor((t + TZ) / DAY) * DAY - TZ;
+  const [counts, recent] = (
+    await db.batch([
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT os, SUM(last >= ?1) AS live, SUM(last >= ?2) AS hour, SUM(last >= ?3) AS today,
+                    SUM(last >= ?4) AS week, SUM(last >= ?5) AS month FROM f GROUP BY os`).bind(t - LIVE, t - 3600, today, t - 7 * DAY, t - 30 * DAY),
+      // country, version and plan are the bare columns of the MAX(ts) row: what the phone reported last.
+      db.prepare(`WITH ${MO} SELECT install_id AS id, os, country, version, plan, MAX(ts) AS last_seen,
+                    (SELECT x.kind FROM events x WHERE x.install_id = mo.install_id AND x.kind != 'ping' ORDER BY x.ts DESC LIMIT 1) AS action,
+                    (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
+                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone
+                  FROM mo GROUP BY install_id ORDER BY last_seen DESC LIMIT 15`),
+    ])
+  ).map((r) => (r.results ?? []) as Row[]);
+  return { counts, recent };
+}
+
+async function mobileData(db: D1Database, t: number): Promise<MobileData> {
+  const today = Math.floor((t + TZ) / DAY) * DAY - TZ;
+  const month = t - 30 * DAY;
+  const day = (col: string) => `date(${col} + ${TZ}, 'unixepoch')`;
+  const back = (name: string, age: number, ago: number) =>
+    `SUM(first <= ${ago}) AS ${name}_base, SUM(first <= ${ago} AND last - first >= ${age}) AS ${name}_back`;
+  const seen = (kind: string) => `COUNT(DISTINCT CASE WHEN kind = '${kind}' THEN install_id END)`;
+  const [lifecycle, usage, features, active, fresh, phones, countries, types] = (
+    await db.batch([
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT os, COUNT(*) AS total, SUM(first >= ?1) AS new_today, SUM(first >= ?2 AND first < ?1) AS new_yesterday,
+                    SUM(last >= ?1) AS today, SUM(last >= ?4) AS month,
+                    ${back("day", DAY, t - DAY)}, ${back("week", 7 * DAY, t - 7 * DAY)}, ${back("month", 30 * DAY, month)},
+                    SUM(last >= ?4 AND last < ?3) AS dormant, SUM(last < ?4) AS gone
+                  FROM f GROUP BY os`).bind(today, today - DAY, t - 7 * DAY, month),
+      // Pro is each installation's latest plan. Everyone sends a basic open; anything else means they allowed the full stats.
+      db.prepare(`WITH ${MO}, last AS (SELECT install_id, os, plan, MAX(ts) FROM mo WHERE ts >= ?1 AND plan IS NOT NULL GROUP BY install_id)
+                  SELECT os, COUNT(DISTINCT install_id) AS active,
+                    COUNT(DISTINCT CASE WHEN kind != 'open' OR COALESCE(detail, '') != 'basic' THEN install_id END) AS allowed,
+                    ${seen("scan")} AS scanned, ${seen("clean")} AS cleaned, ${seen("pro")} AS saw_pro, ${seen("bought")} AS bought,
+                    (SELECT COUNT(*) FROM last WHERE last.os = mo.os AND last.plan = 'pro') AS pro
+                  FROM mo WHERE ts >= ?1 GROUP BY os`).bind(month),
+      db.prepare(`WITH ${MO} SELECT os, kind, COALESCE(detail, '') AS detail, COUNT(*) AS n, COUNT(DISTINCT install_id) AS users, SUM(bytes) AS bytes
+                  FROM mo WHERE ts >= ?1 AND kind != 'ping' GROUP BY 1, 2, 3`).bind(month),
+      db.prepare(`WITH ${MO} SELECT ${day("ts")} AS d, os, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1, 2`).bind(today - 29 * DAY),
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT ${day("first")} AS d, os, COUNT(*) AS n FROM f WHERE first >= ?1 GROUP BY 1, 2`).bind(today - 29 * DAY),
+      db.prepare(`WITH ${MO} SELECT json_extract(s.value, '$.name') AS name, COUNT(DISTINCT h.install_id) AS n FROM hardware h, json_each(h.specs) s
+                  WHERE json_extract(s.value, '$.kind') = 'Telefon' AND h.install_id IN (SELECT install_id FROM mo) GROUP BY 1 ORDER BY n DESC LIMIT 8`),
+      db.prepare(`WITH ${MO} SELECT COALESCE(country, '?') AS country, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1 ORDER BY n DESC LIMIT 8`).bind(month),
+      // Phone or tablet, sent by the app from the screen size (hardware.dart, kind "Tür").
+      db.prepare(`WITH ${MO} SELECT json_extract(s.value, '$.name') AS name, COUNT(DISTINCT h.install_id) AS n FROM hardware h, json_each(h.specs) s
+                  WHERE json_extract(s.value, '$.kind') = 'Tür' AND h.install_id IN (SELECT install_id FROM mo) GROUP BY 1 ORDER BY n DESC`),
+    ])
+  ).map((r) => (r.results ?? []) as Row[]);
+  return { lifecycle, usage, features, active, fresh, phones, countries, types };
+}
+
+const ACTION: Record<string, string> = { open: "Opened the app", scan: "Scanned", clean: "Cleaned", vault: "Used the Vault", focus: "Finished a focus", pro: "Looked at Pro", bought: "Bought Pro", applock: "Locked an app" };
+
+function liveness(last: number, t: number): [string, string] {
+  const s = t - last;
+  if (s < LIVE) return ["live", "Live"];
+  if (s < DAY) return ["recent", "Today"];
+  if (s < 7 * DAY) return ["idle", "This week"];
+  if (s < 30 * DAY) return ["dormant", "Dormant"];
+  return ["gone", "Gone"];
+}
+
+/** Who is on the app right now and who was lately. The page refetches this part every 30 seconds. */
+export function mobileLive({ counts, recent }: MobileNow, t: number): string {
+  const n = (f: string) => Object.fromEntries(counts.map((r) => [r.os, Number(r[f]) || 0]));
+  const total = (f: string) => counts.reduce((a, r) => a + (Number(r[f]) || 0), 0);
+  const box = (f: string, icon: string, tone: string, title: string, hint: string, cls = "") =>
+    tile({ icon, tone, title, hint, cls, value: total(f), rows: osBars(n(f), String, MOBILE) });
+  const clock = new Date((t + TZ) * 1000).toISOString().slice(11, 16);
+  return `<section class="card" id="mobile-live">
+    <p class="label"><span class="dot live"></span>Mobile users, live <span class="aside">· iOS and Android · updated ${clock} Turkey time, refreshes by itself</span></p>
+    <div class="grid five">
+      ${box("live", "phone", "t-green", "Live now", "App on screen, last 5 minutes", "live")}
+      ${box("hour", "clock", "t-teal", "Last hour", "Used the app")}
+      ${box("today", "users", "t-blue", "Today", "Daily active")}
+      ${box("week", "bars", "t-violet", "This week", "Weekly active")}
+      ${box("month", "chart", "t-orange", "This month", "Monthly active")}
+    </div>
+    <p class="label" style="margin-top:20px">Latest seen</p>
+    <div class="scroll"><table>
+      <tr><th>Status</th><th>Installation</th><th>Phone</th><th>Where</th><th>Version</th><th>Plan</th><th>Last seen</th><th>Last did</th></tr>
+      ${recent
+        .map((u) => {
+          const [cls, label] = liveness(u.last_seen, t);
+          return `<tr><td><span class="dot ${cls}"></span>${label}</td><td><a href="/admin/user/${encodeURIComponent(u.id)}"><code>${esc(String(u.id).slice(0, 8))}</code></a></td>
+            <td>${osIcon(u.os)} ${esc(u.phone ?? osName(u.os))}</td><td>${u.country ? `${flag(u.country)} ${esc(u.country)}` : '<span class="muted">—</span>'}</td>
+            <td>${esc(u.version ?? "")}</td><td>${u.plan === "pro" ? '<span class="badge on">Pro</span>' : '<span class="badge">Free</span>'}</td>
+            <td>${ago(u.last_seen)}</td><td class="muted">${ACTION[u.action] ?? "—"}</td></tr>`;
+        })
+        .join("") || `<tr><td colspan="8" class="muted">No phone has reported yet.</td></tr>`}
+    </table></div>
+  </section>`;
+}
+
+/** Bars per day, iOS and Android stacked. */
+function dayStack(rows: Row[], days: string[]): string {
+  const n = (d: string, os: string) => Number(rows.find((r) => r.d === d && r.os === os)?.n) || 0;
+  const peak = Math.max(1, ...days.map((d) => n(d, "ios") + n(d, "android")));
+  return `<div class="stack">${days
+    .map((d) => `<span title="${d}: iOS ${n(d, "ios")}, Android ${n(d, "android")}">${MOBILE.map((os) => `<i class="${os}" style="height:${Math.round((n(d, os) / peak) * 100)}%"></i>`).join("")}</span>`)
+    .join("")}</div><div class="bars-axis"><span>${days.length} days ago</span><span>today</span></div>`;
+}
+
+/** What the phones do with the app: growth, retention, what they use and what leads to Pro. */
+export function mobileCard(m: MobileData, versions: Row[], t: number): string {
+  const rows: Row[] = [...MOBILE, "all"].map((os) => {
+    const merged = (list: Row[]) =>
+      os === "all" ? list.reduce((acc, r) => Object.fromEntries(Object.keys(r).map((k) => [k, (Number(acc[k]) || 0) + (Number(r[k]) || 0)])), {} as Row) : (list.find((r) => r.os === os) ?? {});
+    return { ...merged(m.usage), ...merged(m.lifecycle), os };
+  });
+  const all = rows[2];
+  const num = (v: unknown) => `<td class="num">${v ?? 0}</td>`;
+  const today = Math.floor((t + TZ) / DAY) * DAY;
+  const days = [...Array(30)].map((_, i) => date(today - (29 - i) * DAY));
+  const uses = (kind: string, os: string, detail?: string) => m.features.filter((f) => f.kind === kind && f.os === os && (detail === undefined || f.detail === detail));
+  const sum = (list: Row[], f: string) => list.reduce((a, r) => a + (Number(r[f]) || 0), 0);
+  const freed = sum(m.features.filter((f) => f.kind === "clean"), "bytes");
+  const feature = (label: string, kind: string, detail?: string) => {
+    const [ios, android] = MOBILE.map((os) => uses(kind, os, detail));
+    return `<tr><td>${label}</td>${num(sum(ios, "n"))}${num(sum(android, "n"))}${num(sum(ios, "n") + sum(android, "n"))}</tr>`;
+  };
+  const funnel = [["Used the app and allowed stats", "allowed"], ["Scanned", "scanned"], ["Cleaned", "cleaned"], ["Looked at Pro", "saw_pro"], ["Bought Pro", "bought"]];
+  const sources = Object.entries(
+    m.features.filter((f) => f.kind === "pro").reduce((acc, f) => ({ ...acc, [f.detail]: (acc[f.detail] ?? 0) + f.n }), {} as Record<string, number>),
+  ).sort((a, b) => b[1] - a[1]);
+  const SOURCE: Record<string, string> = { topbar: "Top bar button", clean_banner: "Banner on Clean", clean_limit: "Daily clean limit", vault_limit: "Daily Vault limit", vault_size: "Vault size limit", applock_limit: "App lock limit (1 app)" };
+  return `<section class="card">
+    <p class="label">Mobile analytics <span class="aside">· last 30 days unless it says otherwise</span></p>
+    <div class="grid five">
+      ${stat("New installs today", String(all.new_today ?? 0), `${all.new_yesterday ?? 0} yesterday`)}
+      ${stat("Stickiness", all.month ? `${Math.round(((all.today ?? 0) / all.month) * 100)}%` : "—", "Active today of active this month")}
+      ${stat("Space freed", humanSize(freed), `Cleaned ${sum(m.features.filter((f) => f.kind === "clean"), "n")} times`)}
+      ${stat("Pro now", String(all.pro ?? 0), `${all.bought ?? 0} bought this month`)}
+      ${stat("Allowed stats", all.active ? `${Math.round(((all.allowed ?? 0) / all.active) * 100)}%` : "—", "The rest count only when the app starts")}
+    </div>
+    <div class="two">
+      <div><p class="label">Active users per day <span class="legend"><span><i class="ios"></i>iOS</span><span><i class="android"></i>Android</span></span></p>${dayStack(m.active, days)}</div>
+      <div><p class="label">New installs per day <span class="legend"><span><i class="ios"></i>iOS</span><span><i class="android"></i>Android</span></span></p>${dayStack(m.fresh, days)}</div>
+    </div>
+    <p class="label" style="margin-top:22px">Liveness by platform <span class="aside">· all time</span></p>
+    <div class="scroll"><table>
+      <tr><th>Platform</th><th class="num">Installs</th><th>Came back next day</th><th>Still using after a week</th><th>After a month</th><th class="num">Dormant</th><th class="num">Gone</th></tr>
+      ${rows
+        .map((r) => `<tr${r.os === "all" ? ' class="total"' : ""}><td>${r.os === "all" ? "" : osIcon(r.os)} ${osName(r.os)}</td>${num(r.total)}
+          <td>${ratio(r.day_back ?? 0, r.day_base ?? 0)}</td><td>${ratio(r.week_back ?? 0, r.week_base ?? 0)}</td><td>${ratio(r.month_back ?? 0, r.month_base ?? 0)}</td>${num(r.dormant)}${num(r.gone)}</tr>`)
+        .join("")}
+    </table></div>
+    <p class="muted foot"><b>Dormant</b>: last seen 7 to 30 days ago. <b>Gone</b>: not seen for over 30 days; a phone never says it uninstalled the app.</p>
+    <div class="two">
+      <div><p class="label">From first use to Pro</p><div class="scroll"><table>
+        <tr><th>Step</th><th class="num">iOS</th><th class="num">Android</th><th class="num">Total</th><th>Of previous step</th></tr>
+        ${funnel
+          .map(([label, k], i) => `<tr><td>${label}</td>${num(rows[0][k])}${num(rows[1][k])}${num(all[k])}<td>${i ? ratio(all[k] ?? 0, all[funnel[i - 1][1]] ?? 0) : ""}</td></tr>`)
+          .join("")}
+      </table></div></div>
+      <div><p class="label">Features</p><div class="scroll"><table>
+        <tr><th>Feature</th><th class="num">iOS</th><th class="num">Android</th><th class="num">Total</th></tr>
+        ${feature("App opened", "open")}${feature("Scan", "scan")}${feature("Clean", "clean")}${feature("Vault: encrypt", "vault", "encrypt")}${feature("Vault: open", "vault", "open")}
+        ${feature("Focus finished", "focus")}${feature("App lock: app locked", "applock", "lock")}${feature("Pro sheet", "pro")}${feature("Purchase", "bought")}
+      </table></div></div>
+    </div>
+    <div class="two">
+      <div><p class="label">What opened the Pro sheet</p>${sources.length ? hbars(sources.map(([d, n]) => [SOURCE[d] ?? esc(d || "—"), n]), String) : '<p class="muted">Nothing yet.</p>'}</div>
+      <div><p class="label">Phone or tablet</p>${m.types.length ? hbars(m.types.map((p) => [esc(p.name), p.n]), String) : '<p class="muted">Reported by app versions with tablet support.</p>'}</div>
+      <div><p class="label">Devices</p>${m.phones.length ? hbars(m.phones.map((p) => [esc(p.name), p.n]), String) : '<p class="muted">No phone has reported yet.</p>'}</div>
+      <div><p class="label">Countries</p>${m.countries.length ? hbars(m.countries.map((c) => [`${flag(c.country)} ${esc(countryName(c.country))}`, c.n]), String) : '<p class="muted">Nothing yet.</p>'}</div>
+    </div>
+    <p class="label" style="margin-top:22px">Mobile versions in use</p>
+    ${versionTable(versions, MOBILE)}
+    <p class="muted foot">Counted from the apps' own events. Money and refunds are in App Store Connect and Google Play Console.</p>
+  </section>`;
 }
 
 function totalRow(rows: Row[]): Row {
@@ -659,10 +863,10 @@ function months(subs: Row[], t: number): string {
 }
 
 function userRow(u: Row, back: string): string {
-  const tags = [u.mine ? `<span class="badge you">you</span>` : "", u.channel === "appstore" ? `<span class="badge store">App Store</span>` : ""].join(" ");
+  const tags = [u.mine ? `<span class="badge you">you</span>` : "", STORE_NAME[u.channel] ? `<span class="badge store">${STORE_NAME[u.channel]}</span>` : ""].join(" ");
   return `<tr${u.mine ? ' class="mine"' : ""}><td><a href="/admin/user/${encodeURIComponent(u.id)}"><code>${esc(String(u.id).slice(0, 8))}</code></a> ${tags}</td>
     <td>${u.country ? `${flag(u.country)} ${esc(u.country)}` : '<span class="muted">—</span>'}</td>
-    <td>${osIcon(u.os)} ${esc(u.cpu ?? osName(u.os))}${u.client && u.client !== "gui" ? ` <span class="muted">(${u.client === "tui" ? "terminal" : esc(u.client)})</span>` : ""}</td>
+    <td>${osIcon(u.os)} ${esc(u.phone ?? u.cpu ?? osName(u.os))}${u.client && u.client !== "gui" ? ` <span class="muted">(${u.client === "tui" ? "terminal" : esc(u.client)})</span>` : ""}</td>
     <td>${u.plan === "pro" ? '<span class="badge on">Pro</span>' : u.plan === "free" ? '<span class="badge">Free</span>' : '<span class="muted">—</span>'}</td>
     <td>${esc(u.version ?? "")}</td><td>${date(u.first_seen)}</td><td>${ago(u.last_seen)}</td>
     <td class="num">${u.opens}</td><td class="num">${u.scans}</td><td class="num">${u.cleans}</td><td class="num">${humanSize(u.freed)}</td>
@@ -681,7 +885,7 @@ async function userPage(db: D1Database, id: string): Promise<string> {
                     SUM(CASE WHEN kind = 'clean' THEN bytes END) AS freed, SUM(CASE WHEN kind = 'scan' THEN bytes END) AS found,
                     SUM(kind = 'vault') AS vault, SUM(kind = 'focus') AS focus, SUM(kind = 'pro') AS pro_views,
                     MIN(ts) AS first_seen, MAX(ts) AS last_seen FROM events WHERE install_id = ?1`).bind(id),
-      db.prepare(`SELECT ts, kind, detail, client, os, version, country, plan, channel, files, bytes FROM events WHERE install_id = ?1 ORDER BY ts DESC LIMIT 1000`).bind(id),
+      db.prepare(`SELECT ts, kind, detail, client, os, version, country, plan, channel, files, bytes FROM events WHERE install_id = ?1 AND kind != 'ping' ORDER BY ts DESC LIMIT 1000`).bind(id),
       db.prepare(`SELECT s.id, s.plan, s.status, s.period_end, s.license_key, s.customer_id FROM subscriptions s
                   WHERE s.install_id = ?1 OR s.license_key IN (SELECT license_key FROM activations WHERE install_id = ?1)`).bind(id),
     ])
@@ -694,7 +898,7 @@ async function userPage(db: D1Database, id: string): Promise<string> {
   <p><a href="/admin#users">← All users</a></p>
   <h1 class="title">Installation <code>${esc(id)}</code> ${u?.mine ? '<span class="badge you">you</span>' : ""}</h1>
   <p class="muted">${u ? `${u.country ? `${flag(u.country)} ${esc(countryName(u.country))} · ` : ""}${osName(u.os)} · ${esc(u.version ?? "")} ·
-    ${u.plan === "pro" ? "Pro" : "Free"}${u.channel === "appstore" ? " (App Store)" : ""} · first seen ${date(u.first_seen)} · last seen ${ago(u.last_seen)}` : "No events from this installation."}</p>
+    ${u.plan === "pro" ? "Pro" : "Free"}${STORE_NAME[u.channel] ? ` (${STORE_NAME[u.channel]})` : ""} · first seen ${date(u.first_seen)} · last seen ${ago(u.last_seen)}` : "No events from this installation."}</p>
   ${u ? `<form method="post" action="/admin/mine" class="inline"><input type="hidden" name="install" value="${esc(id)}"><input type="hidden" name="mine" value="${u.mine ? 0 : 1}">
     <input type="hidden" name="back" value="/admin/user/${esc(encodeURIComponent(id))}"><button class="quiet">${u.mine ? "Not me" : "This is me"}</button></form>` : ""}
   <section class="card" style="margin-top:16px"><div class="grid">
@@ -759,6 +963,7 @@ const count = (n: number, tone = "") => (n > 0 ? `<span class="count${tone ? ` $
 
 function ago(ts: number): string {
   const s = now() - ts;
+  if (s < 60) return "just now";
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
   if (s < DAY) return `${Math.round(s / 3600)} h ago`;
   if (s < 30 * DAY) return `${Math.round(s / DAY)} days ago`;
@@ -788,24 +993,26 @@ export function compareVersions(a: string, b: string): number {
 }
 
 function osName(os: string): string {
-  return { macos: "macOS", windows: "Windows", linux: "Linux", all: "All" }[os] ?? esc(os ?? "?");
+  return { macos: "macOS", windows: "Windows", linux: "Linux", ios: "iOS", android: "Android", all: "All" }[os] ?? esc(os ?? "?");
 }
 
 function osIcon(os: string): string {
   if (os === "windows") return WINDOWS_ICON;
   if (os === "linux") return "🐧";
   if (os === "macos") return icon("apple");
+  if (os === "ios") return icon("phone");
+  if (os === "android") return "🤖";
   return "•";
 }
 
-/** Bars per platform: always macOS, Windows and Linux, zeros included, so every tile reads the same way. */
-function osBars(counts: Record<string, number>, fmt: (n: number) => string = String): string {
-  const oses = [...OSES, ...Object.keys(counts).filter((os) => !OSES.includes(os) && counts[os] > 0)];
+/** Bars per platform: always macOS, Windows and Linux, zeros included, so every tile reads the same way; others when they have a count. */
+function osBars(counts: Record<string, number>, fmt: (n: number) => string = String, always = OSES): string {
+  const oses = [...always, ...Object.keys(counts).filter((os) => !always.includes(os) && counts[os] > 0)];
   const total = Math.max(1, oses.reduce((a, os) => a + (counts[os] ?? 0), 0));
   return `<div class="osbars">${oses
     .map((os) => {
       const n = counts[os] ?? 0;
-      return `<div class="osrow os-${OSES.includes(os) ? os : "other"}${n ? "" : " zero"}"><span class="ic">${osIcon(os)}</span><span class="nm">${osName(os)}</span>
+      return `<div class="osrow os-${[...OSES, ...MOBILE].includes(os) ? os : "other"}${n ? "" : " zero"}"><span class="ic">${osIcon(os)}</span><span class="nm">${osName(os)}</span>
         <b>${fmt(n)}</b><span class="track"><i style="width:${Math.round((n / total) * 100)}%"></i></span></div>`;
     })
     .join("")}</div>`;
@@ -820,10 +1027,10 @@ function bars3(rows: [string, number, string][]): string {
     .join("")}</div>`;
 }
 
-function hbars(rows: [string, number][]): string {
+function hbars(rows: [string, number][], fmt: (n: number) => string = humanSize): string {
   const most = Math.max(1, ...rows.map(([, n]) => n));
   return `<div class="hbars">${rows
-    .map(([label, n]) => `<div class="hbar"><span>${label}</span><span class="track"><i style="width:${Math.round((n / most) * 100)}%"></i></span><b>${humanSize(n)}</b></div>`)
+    .map(([label, n]) => `<div class="hbar"><span>${label}</span><span class="track"><i style="width:${Math.round((n / most) * 100)}%"></i></span><b>${fmt(n)}</b></div>`)
     .join("")}</div>`;
 }
 
@@ -924,6 +1131,7 @@ const ICON_PATHS: Record<string, string> = {
   file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/>',
   card: '<rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>',
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  phone: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
   wallet: '<path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   tools: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/>',
   calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
@@ -1030,6 +1238,8 @@ svg.win { width: 13px; height: 13px; vertical-align: -2px; color: #3b9cff; }
 .track i { display: block; height: 100%; border-radius: 99px; background: var(--brand); }
 .os-windows .track i { background: #3b9cff; } .os-linux .track i { background: #f59e0b; } .os-macos .track i { background: #a855f7; }
 .os-macos .ic { color: #e6e8ef; } .os-other .track i { background: var(--muted); }
+.os-ios .ic { color: #e6e8ef; } .os-ios .track i { background: #ec4899; } .os-android .track i { background: #22c55e; }
+.c-play .ic { color: #22c55e; } .c-play .track i { background: #22c55e; }
 .c-web .track i, .c-web .ic { background: #60a5fa; color: #60a5fa; } .c-web .track i { background: #60a5fa; }
 .c-store .ic { color: #a855f7; } .c-store .track i { background: #a855f7; }
 .c-manual .ic { color: var(--orange); } .c-manual .track i { background: var(--orange); }
@@ -1040,6 +1250,20 @@ svg.win { width: 13px; height: 13px; vertical-align: -2px; color: #3b9cff; }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 80px; margin-top: 12px; }
 .bars div { flex: 1; background: var(--brand); opacity: .7; border-radius: 3px 3px 0 0; min-height: 2px; }
 .bars div:last-child { opacity: 1; }
+.stack { display: flex; align-items: stretch; gap: 3px; height: 90px; margin-top: 12px; }
+.stack > span { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; min-width: 0; border-bottom: 2px solid var(--border); }
+.stack i, .legend i { display: block; border-radius: 2px; } .stack i.ios, .legend i.ios { background: #ec4899; } .stack i.android, .legend i.android { background: #22c55e; }
+.stack > span:hover { background: var(--card-2); }
+.legend { display: inline-flex; gap: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; }
+.two { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 22px; }
+.two .label { margin-bottom: 8px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; background: var(--faint); }
+.dot.live { background: var(--accent); animation: pulse 1.6s ease-out infinite; } .dot.recent { background: #2dd4bf; }
+.dot.dormant { background: var(--orange); } .dot.gone { background: var(--red); }
+.stat.live { border-color: rgba(74,222,128,.45); } .stat.live .v { color: var(--accent); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(74,222,128,.6); } 100% { box-shadow: 0 0 0 8px rgba(74,222,128,0); } }
+@media (prefers-reduced-motion: reduce) { .dot.live { animation: none; } }
 .bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 4px; }
 .hbars { display: grid; gap: 8px; }
 .hbar { display: grid; grid-template-columns: 130px 1fr 90px; gap: 12px; align-items: center; }
