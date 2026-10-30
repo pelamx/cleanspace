@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { compareVersions, esc, hardwareHtml, humanSize, worldMap } from "../src/admin";
 import { parseEvent } from "../src/index";
-import { mayActivate, newKey, periodEnd, planOf, verifySignature } from "../src/license";
+import { inCidr, mayActivate, newKey, periodEnd, planOf, verifySignature } from "../src/license";
 import { buyPage, js, pickLang } from "../src/pages";
 import { LANGS, USD, money, word } from "../src/i18n";
 
@@ -122,4 +122,14 @@ test("world map puts a dot on each known country, none for unknown", () => {
   expect(svg.match(/class="spot"/g)).toHaveLength(1);
   expect(svg).toContain("Türkiye: 3");
   expect(svg).toContain('class="land" d="M');
+});
+
+test("webhook sender check: IPv4 inside Paddle's CIDR blocks only", () => {
+  expect(inCidr("34.237.3.244", "34.237.3.244/32")).toBe(true);
+  expect(inCidr("34.237.3.245", "34.237.3.244/32")).toBe(false);
+  expect(inCidr("10.1.2.3", "10.0.0.0/8")).toBe(true);
+  expect(inCidr("11.0.0.1", "10.0.0.0/8")).toBe(false);
+  expect(inCidr("", "34.237.3.244/32")).toBe(false);
+  expect(inCidr("2001:db8::1", "34.237.3.244/32")).toBe(false);
+  expect(inCidr("34.237.3.244", "34.237.3.244/33")).toBe(false);
 });

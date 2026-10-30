@@ -103,7 +103,37 @@ export function mayActivate(devices: string[], install: string): boolean {
 
 // ---------- routes ----------
 
+/** Whether an IPv4 address is inside a CIDR block such as "34.237.3.244/32". */
+export function inCidr(ip: string, cidr: string): boolean {
+  const n = (a: string) => {
+    const p = a.split(".").map(Number);
+    return p.length === 4 && p.every((x) => Number.isInteger(x) && x >= 0 && x <= 255) ? ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0 : null;
+  };
+  const [base, bits] = cidr.split("/");
+  const a = n(ip), b = n(base), len = Number(bits ?? 32);
+  if (a === null || b === null || !(len >= 0 && len <= 32)) return false;
+  const mask = len === 0 ? 0 : (~0 << (32 - len)) >>> 0;
+  return ((a & mask) >>> 0) === ((b & mask) >>> 0);
+}
+
+/** Paddle's webhook servers, from Paddle's own list (it can change), kept for an hour per isolate. */
+let senders: { at: number; cidrs: string[] } | null = null;
+async function fromPaddle(req: Request, env: LicenseEnv): Promise<boolean> {
+  if (!senders || Date.now() - senders.at > 3600_000) {
+    try {
+      const res = await fetch(`${paddleApi(env)}/ips`);
+      const cidrs = res.ok ? ((await res.json()) as { data?: { ipv4_cidrs?: unknown } }).data?.ipv4_cidrs : null;
+      if (Array.isArray(cidrs) && cidrs.every((c) => typeof c === "string")) senders = { at: Date.now(), cidrs };
+    } catch {
+      // Paddle's list is unreachable: an older copy still works; with none, the delivery is refused and Paddle retries.
+    }
+  }
+  const ip = req.headers.get("CF-Connecting-IP") ?? "";
+  return !!senders && senders.cidrs.some((c) => inCidr(ip, c));
+}
+
 async function webhook(req: Request, env: LicenseEnv): Promise<Response> {
+  if (!(await fromPaddle(req, env))) return new Response("not from Paddle", { status: 403 });
   const body = await req.text();
   const secret = env.PADDLE_WEBHOOK_SECRET ?? "";
   if (secret === "" || !(await verifySignature(req.headers.get("Paddle-Signature") ?? "", body, secret, Math.floor(Date.now() / 1000)))) {
