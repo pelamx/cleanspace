@@ -1,7 +1,8 @@
 //! Terminal UI for servers / cloud machines: `deskmonk-tui [FOLDER]` (default: home).
+//! `deskmonk-tui --key KEY` turns Pro on where the desktop app can't run.
 
 use deskmonk::i18n::{self, Lang, t};
-use deskmonk::plan::Plan;
+use deskmonk::plan::{self, Plan};
 use deskmonk::scan::{Category, Item, Phase, human_size};
 use deskmonk::tf;
 use deskmonk::telemetry::{self, Telemetry};
@@ -43,8 +44,11 @@ struct App {
 
 fn main() -> io::Result<()> {
     i18n::init();
-    let root = std::env::args()
-        .nth(1)
+    let arg = std::env::args().nth(1);
+    if arg.as_deref() == Some("--key") {
+        activate(std::env::args().nth(2).unwrap_or_default().trim());
+    }
+    let root = arg
         .map(PathBuf::from)
         .or_else(dirs::home_dir)
         .unwrap_or_default();
@@ -54,6 +58,13 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
     let telemetry = Telemetry::load();
+    let mut plan = Plan::load();
+    // The paid period ran out: the subscription may have renewed. Asked only then, so offline starts stay instant.
+    if plan::URL.is_some() && !plan.key.is_empty() && !plan.is_pro()
+        && let Ok((key, until)) = plan::validate(&plan.key, &telemetry.install_id)
+    {
+        plan.set_license(key, until);
+    }
     let prompt = if telemetry.needs_prompt() {
         Prompt::Consent
     } else {
@@ -70,7 +81,7 @@ fn main() -> io::Result<()> {
         deleting: None,
         status: String::new(),
         telemetry,
-        plan: Plan::load(),
+        plan,
     };
     app.start_scan();
     app.send_opened();
@@ -241,9 +252,9 @@ impl App {
                         let left = human_size(self.plan.clean_left().unwrap_or(0));
                         self.telemetry.used("tui", "pro", "clean_limit");
                         self.status = tf!(
-                            "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız için: deskMonk uygulaması → ⭐ Pro",
-                            "The free plan cleans 2 GB a day; {left} left today. For no limit: deskMonk app → ⭐ Get Pro",
-                            "El plan gratuito limpia 2 GB al día; quedan {left} hoy. Sin límite: app deskMonk → ⭐ Pasar a Pro"
+                            "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız: deskmonk.app/buy, sonra deskmonk-tui --key ANAHTAR",
+                            "The free plan cleans 2 GB a day; {left} left today. No limit: deskmonk.app/buy, then deskmonk-tui --key KEY",
+                            "El plan gratuito limpia 2 GB al día; quedan {left} hoy. Sin límite: deskmonk.app/buy y luego deskmonk-tui --key CLAVE"
                         );
                     }
                     KeyCode::Char('d') if self.selected_totals().0 > 0 => {
@@ -420,4 +431,29 @@ fn centered(area: Rect, percent_x: u16, height: u16) -> Rect {
     ])
     .areas(mid);
     mid
+}
+
+/// `--key KEY`: checks the key with the license server and saves it, like the desktop app's "Enter key".
+fn activate(key: &str) -> ! {
+    let fail = |msg: String| -> ! {
+        eprintln!("{msg}");
+        std::process::exit(1)
+    };
+    if plan::URL.is_none() {
+        println!("{}", t("Bu sürümde Pro sınırı yok.", "This build has no Pro limits.", "Esta versión no tiene límites Pro."));
+        std::process::exit(0);
+    }
+    if key.is_empty() {
+        fail(t("Kullanım: deskmonk-tui --key ANAHTAR", "Usage: deskmonk-tui --key KEY", "Uso: deskmonk-tui --key CLAVE").into());
+    }
+    match plan::validate(key, &Telemetry::load().install_id) {
+        Ok((key, until)) if until > 0 => {
+            Plan::load().set_license(key, until);
+            let date = plan::date(until);
+            println!("{}", tf!("Pro açık, {date} tarihine kadar.", "Pro is on until {date}.", "Pro activo hasta el {date}."));
+            std::process::exit(0)
+        }
+        Ok(_) => fail(t("Bu anahtarın etkin bir aboneliği yok", "This key has no active subscription", "Esta clave no tiene una suscripción activa").into()),
+        Err(e) => fail(e),
+    }
 }

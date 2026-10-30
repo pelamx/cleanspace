@@ -61,7 +61,7 @@
  "hw.l2": "Uji kecepatan disk: kecepatan baca dan tulis sebenarnya dari drive Anda dalam MB/s.",
  "hw.l3": "Produsen memori, jumlah inti, resolusi layar dan kecepatan refresh, waktu aktif.",
  "hw.free": "Gratis di semua paket.",
- "lock.eyebrow": "Kunci aplikasi · macOS",
+ "lock.eyebrow": "Kunci aplikasi · macOS, Linux",
  "lock.title": "Jauhkan mata yang penasaran dari aplikasi Anda",
  "lock.p": "Pilih aplikasi seperti Pesan, Foto, atau WhatsApp. Saat seseorang membukanya, deskMonk menghentikannya dan meminta kata sandi Anda; dengan kata sandi yang benar aplikasi terbuka, dan terkunci lagi saat ditutup.",
  "lock.l1": "Ideal untuk Mac keluarga yang dipakai bersama atau laptop yang Anda pinjamkan sebentar.",

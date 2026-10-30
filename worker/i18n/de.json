@@ -61,7 +61,7 @@
  "hw.l2": "Festplatten-Speedtest: echte Lese- und Schreibgeschwindigkeit Ihres Laufwerks in MB/s.",
  "hw.l3": "Speicherhersteller, Kernanzahl, Bildschirmauflösung und Bildwiederholrate, Betriebszeit.",
  "hw.free": "Kostenlos in jedem Tarif.",
- "lock.eyebrow": "App-Sperre · macOS",
+ "lock.eyebrow": "App-Sperre · macOS, Linux",
  "lock.title": "Neugierige Blicke aus Ihren Apps fernhalten",
  "lock.p": "Wählen Sie Apps wie Nachrichten, Fotos oder WhatsApp. Öffnet jemand eine davon, stoppt deskMonk sie und fragt nach Ihrem Passwort. Mit dem richtigen Passwort öffnet sich die App, und beim Beenden ist sie wieder gesperrt.",
  "lock.l1": "Ideal für einen gemeinsamen Familien-Mac oder einen Laptop, den Sie kurz aus der Hand geben.",

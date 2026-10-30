@@ -61,7 +61,7 @@
  "hw.l2": "Ujian kelajuan cakera: kelajuan baca dan tulis sebenar pemacu anda dalam MB/s.",
  "hw.l3": "Pengeluar memori, bilangan teras, resolusi skrin dan kadar segar semula, masa hidup.",
  "hw.free": "Percuma pada setiap pelan.",
- "lock.eyebrow": "Kunci aplikasi · macOS",
+ "lock.eyebrow": "Kunci aplikasi · macOS, Linux",
  "lock.title": "Jauhkan mata yang ingin tahu daripada aplikasi anda",
  "lock.p": "Pilih aplikasi seperti Mesej, Foto atau WhatsApp. Apabila seseorang membukanya, deskMonk menghentikannya dan meminta kata laluan anda; dengan kata laluan yang betul aplikasi akan dibuka, dan ia dikunci semula apabila ditutup.",
  "lock.l1": "Sesuai untuk Mac keluarga yang dikongsi atau komputer riba yang anda pinjamkan sebentar.",

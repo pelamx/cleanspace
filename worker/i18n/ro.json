@@ -61,7 +61,7 @@
  "hw.l2": "Test de viteză a discului: viteza reală de citire și scriere a unității, în MB/s.",
  "hw.l3": "Producătorul memoriei, numărul de nuclee, rezoluția și rata de reîmprospătare a ecranului, timpul de funcționare.",
  "hw.free": "Gratuit în orice plan.",
- "lock.eyebrow": "Blocare aplicații · macOS",
+ "lock.eyebrow": "Blocare aplicații · macOS, Linux",
  "lock.title": "Feriți-vă aplicațiile de ochii curioșilor",
  "lock.p": "Alegeți aplicații precum Mesaje, Poze sau WhatsApp. Când cineva deschide una, deskMonk o oprește și cere parola; cu parola corectă aplicația se deschide, iar la închidere se blochează din nou.",
  "lock.l1": "Ideal pentru un Mac folosit de toată familia sau pentru un laptop pe care îl dați cuiva pentru un minut.",

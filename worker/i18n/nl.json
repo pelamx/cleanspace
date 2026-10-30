@@ -61,7 +61,7 @@
  "hw.l2": "Schijfsnelheidstest: de echte lees- en schrijfsnelheid van je schijf in MB/s.",
  "hw.l3": "Geheugenfabrikant, aantal cores, schermresolutie en verversingssnelheid, uptime.",
  "hw.free": "Gratis bij elk abonnement.",
- "lock.eyebrow": "App-slot · macOS",
+ "lock.eyebrow": "App-slot · macOS, Linux",
  "lock.title": "Houd nieuwsgierige ogen uit je apps",
  "lock.p": "Kies apps als Berichten, Foto's of WhatsApp. Als iemand er een opent, stopt deskMonk de app en vraagt om je wachtwoord; met het juiste wachtwoord gaat de app open, en bij het afsluiten wordt hij weer vergrendeld.",
  "lock.l1": "Ideaal voor een gedeelde gezins-Mac of een laptop die je even aan iemand geeft.",

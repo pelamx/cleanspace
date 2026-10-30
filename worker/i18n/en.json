@@ -61,7 +61,7 @@
  "hw.l2": "Disk speed test: real read and write speed of your drive in MB/s.",
  "hw.l3": "Memory maker, core counts, screen resolution and refresh rate, uptime.",
  "hw.free": "Free on every plan.",
- "lock.eyebrow": "App lock · macOS",
+ "lock.eyebrow": "App lock · macOS, Linux",
  "lock.title": "Keep curious eyes out of your apps",
  "lock.p": "Choose apps like Messages, Photos or WhatsApp. When someone opens one, deskMonk stops it and asks for your password; with the right password the app opens, and it locks again when it quits.",
  "lock.l1": "Ideal for a shared family Mac or a laptop you hand to someone for a minute.",

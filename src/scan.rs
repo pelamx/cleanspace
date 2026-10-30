@@ -93,6 +93,10 @@ pub fn junk_roots() -> Vec<PathBuf> {
         roots.extend(dirs::cache_dir()); // ~/.cache, ~/Library/Caches
     }
     roots.extend(trash_dir());
+    // Flatpak apps keep their cache in their own sandbox folder, not in ~/.cache.
+    if let Some(h) = &home {
+        roots.extend(fs::read_dir(h.join(".var/app")).into_iter().flatten().flatten().map(|e| e.path().join("cache")).filter(|c| c.is_dir()));
+    }
     roots.extend(home.map(|h| h.join(".npm").join("_cacache")));
     roots
 }

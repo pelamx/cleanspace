@@ -61,7 +61,7 @@
  "hw.l2": "Test rychlosti disku: skutečná rychlost čtení a zápisu v MB/s.",
  "hw.l3": "Výrobce paměti, počet jader, rozlišení a obnovovací frekvence displeje, doba provozu.",
  "hw.free": "Zdarma v každém tarifu.",
- "lock.eyebrow": "Zámek aplikací · macOS",
+ "lock.eyebrow": "Zámek aplikací · macOS, Linux",
  "lock.title": "Chraňte své aplikace před zvědavýma očima",
  "lock.p": "Vyberte aplikace jako Zprávy, Fotky nebo WhatsApp. Když některou z nich někdo otevře, deskMonk ji zastaví a požádá o heslo; se správným heslem se aplikace otevře a po ukončení se znovu zamkne.",
  "lock.l1": "Ideální pro sdílený rodinný Mac nebo notebook, který na chvíli někomu půjčíte.",

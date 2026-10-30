@@ -61,7 +61,7 @@
  "hw.l2": "Lemezsebesség-teszt: a meghajtó valós olvasási és írási sebessége MB/s-ban.",
  "hw.l3": "Memória gyártója, magok száma, képernyőfelbontás és frissítési gyakoriság, üzemidő.",
  "hw.free": "Minden csomagban ingyenes.",
- "lock.eyebrow": "Alkalmazászár · macOS",
+ "lock.eyebrow": "Alkalmazászár · macOS, Linux",
  "lock.title": "Tartsd távol a kíváncsi szemeket az alkalmazásaidtól",
  "lock.p": "Válassz alkalmazásokat, például az Üzeneteket, a Fotókat vagy a WhatsAppot. Ha valaki megnyit egyet, a deskMonk megállítja és jelszót kér; helyes jelszóval az alkalmazás megnyílik, kilépéskor pedig újra lezáródik.",
  "lock.l1": "Ideális egy közös családi Machez vagy egy laptophoz, amelyet egy percre odaadsz valakinek.",

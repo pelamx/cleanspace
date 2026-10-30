@@ -47,7 +47,7 @@ jobs:
           name: macos
           path: dist/*.dmg
 
-  # AppImage + tar.gz per CPU, built on AlmaLinux 8 (glibc 2.28) so they run on nearly every distro from 2019 on.
+  # AppImage, tar.gz, .deb, .rpm and Arch package per CPU, built on AlmaLinux 8 (glibc 2.28) so they run on nearly every distro from 2019 on.
   linux:
     strategy:
       fail-fast: false
@@ -70,6 +70,9 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
 
   windows:
     runs-on: windows-latest
@@ -119,6 +122,9 @@ jobs:
     needs: [test, macos, linux, windows, tui-musl]
     runs-on: ubuntu-latest
     steps:
+      # Without the license server the apps unlock Pro for everyone; without telemetry nothing is counted.
+      - name: Release builds know their servers
+        run: test -n "$DESKMONK_LICENSE_URL" && test -n "$DESKMONK_TELEMETRY_URL"
       - uses: actions/download-artifact@v4
         with:
           path: dist

@@ -61,7 +61,7 @@
  "hw.l2": "Disk sürəti testi: diskinizin real oxuma və yazma sürəti, MB/s ilə.",
  "hw.l3": "Yaddaş istehsalçısı, nüvə sayı, ekranın ayırdetmə qabiliyyəti və yenilənmə tezliyi, iş müddəti.",
  "hw.free": "Bütün planlarda pulsuz.",
- "lock.eyebrow": "Tətbiq kilidi · macOS",
+ "lock.eyebrow": "Tətbiq kilidi · macOS, Linux",
  "lock.title": "Maraqlı gözləri tətbiqlərinizdən uzaq tutun",
  "lock.p": "Mesajlar, Şəkillər və ya WhatsApp kimi tətbiqləri seçin. Kimsə onlardan birini açanda deskMonk onu dayandırır və parolunuzu soruşur; düzgün parolla tətbiq açılır, bağlananda isə yenidən kilidlənir.",
  "lock.l1": "Ailənin ortaq Mac-i və ya bir dəqiqəlik kiməsə verdiyiniz noutbuk üçün ideal.",

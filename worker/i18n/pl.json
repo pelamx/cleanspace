@@ -61,7 +61,7 @@
  "hw.l2": "Test szybkości dysku: rzeczywista prędkość odczytu i zapisu w MB/s.",
  "hw.l3": "Producent pamięci, liczba rdzeni, rozdzielczość i częstotliwość odświeżania ekranu, czas pracy.",
  "hw.free": "Za darmo w każdym planie.",
- "lock.eyebrow": "Blokada aplikacji · macOS",
+ "lock.eyebrow": "Blokada aplikacji · macOS, Linux",
  "lock.title": "Chroń swoje aplikacje przed ciekawskimi oczami",
  "lock.p": "Wybierz aplikacje, takie jak Wiadomości, Zdjęcia czy WhatsApp. Gdy ktoś otworzy jedną z nich, deskMonk ją zatrzyma i poprosi o hasło; po podaniu właściwego hasła aplikacja się otwiera, a po zamknięciu znów jest zablokowana.",
  "lock.l1": "Idealne dla wspólnego rodzinnego Maca albo laptopa, który na chwilę komuś pożyczasz.",

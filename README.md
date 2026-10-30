@@ -32,7 +32,11 @@ TUI'de `d` aynı kuralla temizler, `D` her şeyi kalıcı siler (sunucularda ç�
 - `deskMonk-<sürüm>-macos.dmg`: macOS, Apple Silicon (M1–M5) ve Intel için tek uygulama (macOS 10.13+)
 - `deskMonk-<sürüm>-linux-x86_64.AppImage` / `-linux-aarch64.AppImage`: tek dosya, neredeyse her dağıtımda çalışır
   (glibc 2.28+: Ubuntu 18.10+, Debian 10+, Fedora, RHEL/Alma/Rocky 8+, Arch, openSUSE…)
-- `deskmonk-linux-x86_64.tar.gz` / `-aarch64.tar.gz`: aynı uygulama, simgesi ve `.desktop` dosyasıyla
+- `deskmonk_<sürüm>_amd64.deb` / `_arm64.deb`: Debian, Ubuntu, Mint, Pop!_OS (`sudo apt install ./deskmonk_*.deb`)
+- `deskmonk-<sürüm>-1.x86_64.rpm` / `.aarch64.rpm`: Fedora, RHEL/Alma/Rocky, openSUSE (`sudo dnf install ./deskmonk-*.rpm`)
+- `deskmonk-<sürüm>-1-x86_64.pkg.tar.zst` / `-aarch64`: Arch, Manjaro, EndeavourOS (`sudo pacman -U deskmonk-*.pkg.tar.zst`)
+- `deskmonk-linux-x86_64.tar.gz` / `-aarch64.tar.gz`: aynı uygulama ve TUI; `./install.sh` menüye ekler
+  (kendi kullanıcın için `~/.local`, `sudo` ile `/usr/local`; `./install.sh --uninstall` kaldırır)
 - `deskmonk-windows-x86_64.zip`: Windows uygulaması ve TUI
 - `deskmonk-tui-linux-x86_64` / `-aarch64`: statik TUI, o işlemcili her Linux'ta çalışır (sunucular, cloud)
 
@@ -65,10 +69,14 @@ ekran, disk, pil) ve doluluk/pil sağlığı/çalışma süresi gibi kullanım b
 sağ tık klasörde gösterir, üstteki yol ile geri çıkılır.
 Donanım ekranındaki **Disk hız testi** sistem diskine 1 GB'lık geçici dosya yazıp geri okur ve MB/s gösterir; dosya her
 durumda silinir, yeterli boş alan (3 GB) yoksa test çalışmaz.
-**Sistem → Uygulama kilidi** (macOS): şifre belirlenip uygulamalar seçilir; kilitli bir uygulama açılınca deskMonk onu
+**Sistem → Uygulama kilidi** (macOS, Linux): şifre belirlenip uygulamalar seçilir; kilitli bir uygulama açılınca deskMonk onu
 durdurur ve şifre sorar, doğru şifreyle açar, uygulama kapatılınca yeniden kilitler. Zaten açık olan uygulamalar (kaydedilmemiş
 iş olabilir) kapatılana kadar durdurulmaz. deskMonk açıkken çalışır (pencereyi kapatmak sorun değil); Cmd+Q ile çıkılırsa
 kilit kalkar, bu yüzden bir gizlilik kilidi olarak düşünülmeli, güvenlik duvarı olarak değil.
+Linux'ta uygulamalar menüdeki `.desktop` kayıtlarıdır (Flatpak ve Snap dahil). Açılan uygulama programının yolundan
+ya da masaüstünün (GNOME, KDE, uwsm, Flatpak) onu başlattığı systemd scope'undan tanınır; yalnızca kullanıcının kendi
+süreçleri durdurulur. Pencereyi küçültmek sorun değil, deskMonk kapatılırsa kilit kalkar. Kabuk betiğiyle açılan ve
+kendi scope'u olmayan uygulamalar tanınamaz, terminal uygulamaları listelenmez.
 
 ## TUI
 
@@ -76,6 +84,9 @@ kilit kalkar, bu yüzden bir gizlilik kilidi olarak düşünülmeli, güvenlik d
 deskmonk-tui [KLASÖR]   # varsayılan: ev dizini
 ```
 `↑↓` gezin · `boşluk` seç · `a/n` tümü/hiçbiri · `←→` kategori · `d` temizle · `D` hepsini kalıcı sil · `r` yeniden tara · `t` istatistik aç/kapa · `q` çık
+
+Masaüstü uygulaması olmayan sunucularda Pro, deskmonk.app/buy'dan alınan anahtarla açılır: `deskmonk-tui --key ANAHTAR`.
+Abonelik yenilendiğinde TUI bunu kendisi fark eder (süre dolunca açılışta sunucuya sorar).
 
 ## Kullanım istatistikleri ve admin paneli
 

@@ -1,0 +1,41 @@
+# Native packages from the binaries packaging/linux.sh builds: .deb (Debian, Ubuntu, Mint, Pop!_OS),
+# .rpm (Fedora, RHEL/Alma/Rocky, openSUSE) and .pkg.tar.zst (Arch, Manjaro, EndeavourOS).
+# Graphics libraries are loaded at runtime, so they are dependencies here, not linked.
+name: deskmonk
+arch: ${NFPM_ARCH}
+version: ${VERSION}
+maintainer: pelamx <support@deskmonk.app>
+description: |
+  Smart storage cleaner: finds duplicates, junk, old downloads and large files,
+  with an encrypted Vault, Monk focus mode, disk map, hardware view and app lock.
+homepage: https://deskmonk.app
+license: Proprietary
+section: utils
+contents:
+  - src: target/release/deskmonk
+    dst: /usr/bin/deskmonk
+  - src: target/release/deskmonk-tui
+    dst: /usr/bin/deskmonk-tui
+  - src: assets/deskmonk.desktop
+    dst: /usr/share/applications/deskmonk.desktop
+  - src: assets/icon.png
+    dst: /usr/share/icons/hicolor/256x256/apps/deskmonk.png
+overrides:
+  # X11 and Wayland windowing, keyboard and GL libraries the GUI opens at runtime (winit, glutin).
+  deb:
+    depends: [libc6, libx11-6, libx11-xcb1, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libxkbcommon-x11-0,
+      libwayland-client0, libwayland-cursor0, libwayland-egl1, libegl1, libgl1]
+    # File dialogs (Browse…), notifications, "show in folder".
+    recommends: [xdg-desktop-portal, libnotify-bin, dbus, xdg-utils]
+  rpm:
+    # Library and file names, not package names: those differ between Fedora/RHEL and openSUSE.
+    depends: ["libX11.so.6()(64bit)", "libX11-xcb.so.1()(64bit)", "libXcursor.so.1()(64bit)", "libXrandr.so.2()(64bit)",
+      "libXi.so.6()(64bit)", "libxkbcommon.so.0()(64bit)", "libxkbcommon-x11.so.0()(64bit)", "libwayland-client.so.0()(64bit)",
+      "libwayland-cursor.so.0()(64bit)", "libwayland-egl.so.1()(64bit)", "libEGL.so.1()(64bit)", "libGL.so.1()(64bit)"]
+    recommends: [xdg-desktop-portal, /usr/bin/notify-send, /usr/bin/dbus-send, /usr/bin/xdg-open]
+  archlinux:
+    depends: [glibc, libx11, libxcursor, libxrandr, libxi, libxkbcommon, libxkbcommon-x11, wayland, libglvnd]
+    # Shown by pacman as optional dependencies.
+    suggests: [xdg-desktop-portal, libnotify, xdg-utils]
+archlinux:
+  packager: pelamx <support@deskmonk.app>

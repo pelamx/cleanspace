@@ -61,7 +61,7 @@
  "hw.l2": "Hastighetstest för disk: verklig läs- och skrivhastighet för din enhet i MB/s.",
  "hw.l3": "Minnestillverkare, antal kärnor, skärmupplösning och uppdateringsfrekvens, drifttid.",
  "hw.free": "Gratis på alla planer.",
- "lock.eyebrow": "Applås · macOS",
+ "lock.eyebrow": "Applås · macOS, Linux",
  "lock.title": "Håll nyfikna ögon borta från dina appar",
  "lock.p": "Välj appar som Meddelanden, Bilder eller WhatsApp. När någon öppnar en av dem stoppar deskMonk den och ber om ditt lösenord; med rätt lösenord öppnas appen, och den låses igen när den avslutas.",
  "lock.l1": "Perfekt för en delad familje-Mac eller en laptop du lånar ut en stund.",

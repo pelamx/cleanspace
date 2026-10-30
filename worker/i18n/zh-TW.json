@@ -61,7 +61,7 @@
  "hw.l2": "磁碟速度測試：以 MB/s 顯示硬碟的實際讀寫速度。",
  "hw.l3": "記憶體廠牌、核心數、螢幕解析度和更新率、開機時間。",
  "hw.free": "所有方案皆免費。",
- "lock.eyebrow": "App 鎖 · macOS",
+ "lock.eyebrow": "App 鎖 · macOS, Linux",
  "lock.title": "不讓好奇的眼光窺探你的 App",
  "lock.p": "選擇「訊息」、「照片」或 WhatsApp 等 App。有人打開時，deskMonk 會攔下並要求輸入密碼；密碼正確才會打開，App 結束後會再次上鎖。",
  "lock.l1": "非常適合全家共用的 Mac，或暫時借給別人用一下的筆電。",

@@ -61,7 +61,7 @@
  "hw.l2": "Levyn nopeustesti: asemasi todellinen luku- ja kirjoitusnopeus, MB/s.",
  "hw.l3": "Muistin valmistaja, ydinmäärät, näytön tarkkuus ja virkistystaajuus, käynnissäoloaika.",
  "hw.free": "Ilmainen kaikissa paketeissa.",
- "lock.eyebrow": "Sovelluslukko · macOS",
+ "lock.eyebrow": "Sovelluslukko · macOS, Linux",
  "lock.title": "Pidä uteliaat silmät poissa sovelluksistasi",
  "lock.p": "Valitse sovelluksia, kuten Viestit, Kuvat tai WhatsApp. Kun joku avaa jonkin niistä, deskMonk pysäyttää sen ja kysyy salasanaasi; oikealla salasanalla sovellus aukeaa, ja se lukittuu uudelleen, kun se suljetaan.",
  "lock.l1": "Ihanteellinen perheen yhteiselle Macille tai kannettavalle, jonka annat hetkeksi jonkun käteen.",

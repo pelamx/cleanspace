@@ -26,7 +26,8 @@ esac
 # Also C code inside dependencies (e.g. ring) is built for this macOS version, not the build machine's.
 export MACOSX_DEPLOYMENT_TARGET=$MINOS
 TARGET_DIR=${CARGO_TARGET_DIR:-target}
-build() { cargo build --release --bin deskmonk --target "$1" "${FEATURES[@]}"; }
+# ${X[@]+…} form: macOS's bash 3.2 calls an empty array "unbound" under set -u.
+build() { cargo build --release --bin deskmonk --target "$1" ${FEATURES[@]+"${FEATURES[@]}"}; }
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
   # A fresh build on macOS 27 sometimes cannot load a proc-macro it just built ("can't find crate");
   # building again continues where it stopped.

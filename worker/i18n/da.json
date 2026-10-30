@@ -61,7 +61,7 @@
  "hw.l2": "Disk-hastighedstest: den reelle læse- og skrivehastighed for dit drev i MB/s.",
  "hw.l3": "Hukommelsesproducent, antal kerner, skærmopløsning og opdateringshastighed, oppetid.",
  "hw.free": "Gratis i alle planer.",
- "lock.eyebrow": "Applås · macOS",
+ "lock.eyebrow": "Applås · macOS, Linux",
  "lock.title": "Hold nysgerrige øjne væk fra dine apps",
  "lock.p": "Vælg apps som Beskeder, Fotos eller WhatsApp. Når nogen åbner en af dem, stopper deskMonk den og beder om din adgangskode; med den rigtige adgangskode åbner appen, og den låses igen, når den lukkes.",
  "lock.l1": "Ideel til en fælles familie-Mac eller en bærbar, du låner ud et øjeblik.",

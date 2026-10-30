@@ -33,10 +33,17 @@ impl Telemetry {
             Some("no") => Some(false),
             _ => None,
         };
-        Self {
-            install_id: install_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            consent,
-        }
+        // Saved at once, not only with the consent answer: the license server counts devices by this id,
+        // so a new one on every launch would use up a key's devices.
+        let install_id = install_id.unwrap_or_else(|| {
+            let id = uuid::Uuid::new_v4().to_string();
+            if let Some(path) = config_path() {
+                let _ = fs::create_dir_all(path.parent().unwrap());
+                let _ = fs::write(path, format!("{id}\n"));
+            }
+            id
+        });
+        Self { install_id, consent }
     }
 
     pub fn set_consent(&mut self, yes: bool) {

@@ -61,7 +61,7 @@
  "hw.l2": "Kiểm tra tốc độ ổ đĩa: tốc độ đọc và ghi thực tế của ổ đĩa tính bằng MB/s.",
  "hw.l3": "Hãng sản xuất bộ nhớ, số nhân, độ phân giải và tần số quét màn hình, thời gian hoạt động.",
  "hw.free": "Miễn phí trong mọi gói.",
- "lock.eyebrow": "Khóa ứng dụng · macOS",
+ "lock.eyebrow": "Khóa ứng dụng · macOS, Linux",
  "lock.title": "Giữ ứng dụng của bạn tránh xa những ánh mắt tò mò",
  "lock.p": "Chọn các ứng dụng như Tin nhắn, Ảnh hoặc WhatsApp. Khi có ai mở một trong số đó, deskMonk sẽ chặn lại và hỏi mật khẩu của bạn; nhập đúng mật khẩu thì ứng dụng mở ra, và sẽ khóa lại khi thoát.",
  "lock.l1": "Lý tưởng cho chiếc Mac dùng chung trong gia đình hoặc chiếc laptop bạn cho ai đó mượn một lát.",

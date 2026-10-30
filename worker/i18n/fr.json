@@ -61,7 +61,7 @@
  "hw.l2": "Test de vitesse du disque : vitesse réelle de lecture et d'écriture de votre disque en MB/s.",
  "hw.l3": "Fabricant de la mémoire, nombre de cœurs, résolution et fréquence de l'écran, temps de fonctionnement.",
  "hw.free": "Gratuit dans toutes les formules.",
- "lock.eyebrow": "Verrouillage d'apps · macOS",
+ "lock.eyebrow": "Verrouillage d'apps · macOS, Linux",
  "lock.title": "Tenez les curieux à l'écart de vos apps",
  "lock.p": "Choisissez des apps comme Messages, Photos ou WhatsApp. Quand quelqu'un en ouvre une, deskMonk l'arrête et demande votre mot de passe ; avec le bon mot de passe, l'app s'ouvre, et elle se verrouille à nouveau quand on la quitte.",
  "lock.l1": "Idéal pour un Mac familial partagé ou un portable que vous prêtez une minute.",

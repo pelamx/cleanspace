@@ -7,5 +7,5 @@ Comment[es]=Soluciones inteligentes
 Exec=deskmonk
 Icon=deskmonk
 Terminal=false
-Categories=Utility;System;
+Categories=System;FileTools;
 StartupWMClass=deskmonk

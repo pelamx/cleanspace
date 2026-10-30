@@ -87,7 +87,7 @@ fn main() -> eframe::Result {
             #[cfg(feature = "appstore")]
             store::start(&cc.egui_ctx);
             // App Lock stops other apps, which the App Store sandbox does not allow.
-            if cfg!(target_os = "macos") && !APPSTORE {
+            if cfg!(any(target_os = "macos", target_os = "linux")) && !APPSTORE {
                 let (tx, rx) = channel();
                 let ctx = cc.egui_ctx.clone();
                 app.watcher = Some(applock::Watcher::start(app.lock.apps.clone(), move |blocked| {
@@ -1813,7 +1813,10 @@ impl App {
                     ui.label(RichText::new(tf!("Kilitli uygulamalar ({})", "Locked apps ({})", "Apps bloqueadas ({})", self.lock.apps.len())).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(t("+ Başka konumdan ekle…", "+ Add from elsewhere…", "+ Añadir desde otra ubicación…")).clicked()
-                            && let Some(app) = rfd::FileDialog::new().set_directory("/Applications").add_filter(t("Uygulama", "App", "App"), &["app"]).pick_file()
+                            && let Some(app) = rfd::FileDialog::new()
+                                .set_directory(if cfg!(target_os = "linux") { "/usr/share/applications" } else { "/Applications" })
+                                .add_filter(t("Uygulama", "App", "App"), &[applock::EXT])
+                                .pick_file()
                         {
                             if !applock::can_lock(&app) {
                                 self.lock_error = tf!(
@@ -1876,7 +1879,7 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("installed").max_height(420.0).auto_shrink([false, true]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     for app in installed.iter() {
-                        let name = app.file_stem().unwrap_or_default().to_string_lossy();
+                        let name = applock::name(app);
                         if !name.to_lowercase().contains(&needle) {
                             continue;
                         }
@@ -1906,11 +1909,15 @@ impl App {
                 self.save_lock();
             }
             ui.add_space(8.0);
-            ui.label(RichText::new(t(
+            ui.label(RichText::new(if cfg!(target_os = "macos") { t(
                 "deskMonk açık olduğu sürece çalışır: pencereyi kapatmak sorun değil, ama Cmd+Q ile çıkılırsa kilit kalkar. Zaten açık olan bir uygulama, kapatılana kadar kilitlenmez.",
                 "Works while deskMonk runs: closing the window is fine, but quitting with Cmd+Q lifts the lock. An app that is already open is not locked until it quits.",
                 "Funciona mientras deskMonk esté abierto: cerrar la ventana no importa, pero salir con Cmd+Q quita el bloqueo. Una app que ya está abierta no se bloquea hasta que se cierre.",
-            )).small().color(muted));
+            ) } else { t(
+                "deskMonk açık olduğu sürece çalışır: pencereyi küçültmek sorun değil, ama deskMonk kapatılırsa kilit kalkar. Zaten açık olan bir uygulama, kapatılana kadar kilitlenmez.",
+                "Works while deskMonk runs: minimizing the window is fine, but closing deskMonk lifts the lock. An app that is already open is not locked until it quits.",
+                "Funciona mientras deskMonk esté abierto: minimizar la ventana no importa, pero cerrar deskMonk quita el bloqueo. Una app que ya está abierta no se bloquea hasta que se cierre.",
+            ) }).small().color(muted));
             if !self.lock_error.is_empty() && self.lock_prompt.is_none() && self.unlock.is_none() {
                 ui.label(RichText::new(&self.lock_error).color(DANGER));
             }
@@ -1936,7 +1943,7 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
             for (i, app) in self.lock.apps.iter().enumerate() {
-                let name = app.file_stem().unwrap_or_default().to_string_lossy();
+                let name = applock::name(app);
                 let icon = self.icons.get(ui.ctx(), app);
                 if app_tile(ui, icon, &name).on_hover_text(app.display().to_string()).clicked() {
                     clicked = Some(i);
@@ -1956,7 +1963,7 @@ impl App {
     fn unlock_modal(&mut self, ui: &mut Ui) {
         let Some(action) = self.unlock.clone() else { return };
         let (name, icon) = match &action {
-            Unlock::App(app) => (app.file_stem().unwrap_or_default().to_string_lossy().into_owned(), self.icons.get(ui.ctx(), app)),
+            Unlock::App(app) => (applock::name(app), self.icons.get(ui.ctx(), app)),
             _ => (String::new(), None),
         };
         let (title, subtitle, button) = match &action {
@@ -2075,7 +2082,7 @@ impl eframe::App for App {
     // macOS: the close button hides the app instead of quitting, so a scan or cleaning keeps running and
     // clicking the Dock icon brings the window back. Cmd+Q / Dock → Quit still quit.
     // In `logic`, not `ui`: eframe skips `ui` while the window is hidden, and an uncancelled close quits.
-    #[cfg(target_os = "macos")]
+    // Linux has no Dock to bring a hidden window back, so there closing quits and the lock prompt un-minimizes.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.monk_tick(ctx);
         // Runs while the window is hidden too, so a locked app's password prompt can bring deskMonk back.
@@ -2087,9 +2094,18 @@ impl eframe::App for App {
                 }
                 continue;
             }
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Wayland may refuse to raise the window; the notification still says why the app did not open.
+                let name = applock::name(&app);
+                notify(&tf!("{name} kilitli", "{name} is locked", "{name} está bloqueada"), t("Açmak için deskMonk şifresini girin.", "Enter the deskMonk password to open it.", "Introduzca la contraseña de deskMonk para abrirla."));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+            }
             self.lock_prompt = Some(app);
             self.lock_error.clear();
             self.lock_pw.clear();
+            #[cfg(target_os = "macos")]
             if let Some(mtm) = objc2::MainThreadMarker::new() {
                 let ns_app = objc2_app_kit::NSApplication::sharedApplication(mtm);
                 ns_app.unhide(None);
@@ -2101,6 +2117,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
+        #[cfg(target_os = "macos")]
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if let Some(mtm) = objc2::MainThreadMarker::new() {
@@ -2364,7 +2381,7 @@ impl eframe::App for App {
         }
 
         if let Some(app) = self.lock_prompt.clone() {
-            let name = app.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let name = applock::name(&app);
             let mut close = false;
             let icon = self.icons.get(&ctx, &app);
             egui::Modal::new(egui::Id::new("applock")).frame(egui::Frame::popup(ui.style()).inner_margin(Margin::same(28))).show(&ctx, |ui| {
@@ -2498,7 +2515,25 @@ fn app_icon(app: &Path, px: usize) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::from_rgba_premultiplied([px, px], data))
 }
 
-#[cfg(not(target_os = "macos"))]
+/// The launcher's PNG icon from the hicolor theme or pixmaps.
+// shortcut: SVG-only icons (common for GNOME core apps) show the lettered placeholder; needs an SVG renderer (resvg).
+#[cfg(target_os = "linux")]
+fn app_icon(app: &Path, _: usize) -> Option<egui::ColorImage> {
+    let text = std::fs::read_to_string(app).ok()?;
+    let icon = text.lines().find_map(|l| l.strip_prefix("Icon="))?.trim();
+    let mut paths = vec![PathBuf::from(icon)];
+    let roots = [dirs::data_dir().unwrap_or_default(), dirs::data_dir().unwrap_or_default().join("flatpak/exports/share")];
+    let system = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty()).unwrap_or("/usr/local/share:/usr/share".into());
+    for root in roots.into_iter().chain(system.split(':').map(PathBuf::from)).chain(["/var/lib/flatpak/exports/share".into()]) {
+        paths.extend(["64x64", "128x128", "48x48", "256x256", "96x96", "512x512", "32x32"].map(|s| root.join(format!("icons/hicolor/{s}/apps/{icon}.png"))));
+        paths.push(root.join(format!("pixmaps/{icon}.png")));
+    }
+    let png = paths.iter().filter(|p| p.extension().is_some_and(|e| e == "png")).find_map(|p| std::fs::read(p).ok())?;
+    let img = eframe::icon_data::from_png_bytes(&png).ok()?;
+    Some(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.rgba))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn app_icon(_: &Path, _: usize) -> Option<egui::ColorImage> {
     None
 }
@@ -3125,14 +3160,36 @@ fn reveal_in_folder(path: &Path) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let result = if cfg!(windows) {
-            std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn()
-        } else {
-            std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn()
-        };
-        if let Err(e) = result {
-            eprintln!("could not open folder: {e}");
+        if cfg!(windows) {
+            if let Err(e) = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn() {
+                eprintln!("could not open folder: {e}");
+            }
+            return;
         }
+        // The file manager selects the file through the freedesktop FileManager1 D-Bus API (Nautilus, Dolphin,
+        // Nemo, Caja, Thunar…); without one, its folder opens. In a thread: dbus-send waits for the reply.
+        #[cfg(unix)]
+        let url = {
+            use std::os::unix::ffi::OsStrExt;
+            // Percent-encoded, which also keeps commas from splitting dbus-send's array.
+            let safe = |b: u8| b.is_ascii_alphanumeric() || b"/-._~".contains(&b);
+            path.as_os_str().as_bytes().iter().fold("file://".to_string(), |u, &b| if safe(b) { u + &(b as char).to_string() } else { u + &format!("%{b:02X}") })
+        };
+        #[cfg(not(unix))]
+        let url = String::new();
+        let path = path.to_path_buf();
+        std::thread::spawn(move || {
+            let shown = std::process::Command::new("dbus-send")
+                .args(["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems"])
+                .arg(format!("array:string:{url}"))
+                .arg("string:")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !shown && let Err(e) = std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(&path)).status() {
+                eprintln!("could not open folder: {e}");
+            }
+        });
     }
 }
 
