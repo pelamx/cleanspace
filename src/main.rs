@@ -1697,6 +1697,34 @@ impl App {
         clicked
     }
 
+    /// A locked app was stopped: show the password prompt and bring deskMonk forward. Without this
+    /// the app is killed and never asks for anything, which is worse than not locking it at all.
+    fn poll_blocked(&mut self, ctx: &egui::Context) {
+        while let Some(app) = self.blocked.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            if self.lock_prompt.is_some() {
+                // One prompt at a time; this app asks again on its next launch.
+                if let Some(w) = &self.watcher {
+                    w.dismiss(&app);
+                }
+                continue;
+            }
+            self.lock_prompt = Some(app);
+            self.lock_error.clear();
+            self.lock_pw.clear();
+            #[cfg(target_os = "macos")]
+            if let Some(mtm) = objc2::MainThreadMarker::new() {
+                let ns_app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+                ns_app.unhide(None);
+                #[allow(deprecated)] // `activate` needs macOS 14; this app supports 11+.
+                ns_app.activateIgnoringOtherApps(true);
+            }
+            // The prompt must not sit behind the window the user was looking at. Reset to Normal
+            // when the prompt closes.
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+    }
+
     fn ask_unlock(&mut self, action: Unlock) {
         self.unlock = Some(action);
         self.lock_error.clear();
@@ -1830,28 +1858,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.monk_tick(ctx);
         // Runs while the window is hidden too, so a locked app's password prompt can bring deskMonk back.
-        while let Some(app) = self.blocked.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            if self.lock_prompt.is_some() {
-                // One prompt at a time; this app asks again on its next launch.
-                if let Some(w) = &self.watcher {
-                    w.dismiss(&app);
-                }
-                continue;
-            }
-            self.lock_prompt = Some(app);
-            self.lock_error.clear();
-            self.lock_pw.clear();
-            if let Some(mtm) = objc2::MainThreadMarker::new() {
-                let ns_app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-                ns_app.unhide(None);
-                #[allow(deprecated)] // `activate` needs macOS 14; this app supports 11+.
-                ns_app.activateIgnoringOtherApps(true);
-            }
-            // macOS 14+ ignores activation from a background app, so the prompt would sit behind the
-            // frontmost window; keep the window on top until the prompt closes.
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
+        self.poll_blocked(ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if let Some(mtm) = objc2::MainThreadMarker::new() {
@@ -1864,6 +1871,9 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.icons.budget = 12;
         self.monk_tick(&ctx);
+        // On macOS `logic` already did this while the window may have been hidden; draining twice
+        // is harmless, and everywhere else this is the only place the prompt can appear.
+        self.poll_blocked(&ctx);
         if std::mem::take(&mut self.autostart) {
             self.start_scan(ctx.clone());
         }

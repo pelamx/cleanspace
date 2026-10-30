@@ -139,6 +139,36 @@ pub fn installed_apps() -> Vec<PathBuf> {
     sorted(apps)
 }
 
+/// Windows marks GUI programs in the PE header. Console tools (bash, gh, 7za, updaters) share the
+/// program folders but are not apps anyone locks, and they crowded the real ones out of the list.
+/// Anything unreadable counts as an app, so a failure here can never hide one.
+#[cfg(windows)]
+fn is_gui_app(exe: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let subsystem = |mut f: fs::File| -> io::Result<u16> {
+        let mut at = [0u8; 4];
+        f.seek(SeekFrom::Start(0x3C))?; // e_lfanew: where the PE header starts
+        f.read_exact(&mut at)?;
+        let pe = u32::from_le_bytes(at) as u64;
+        // Check the signature first: without it any file long enough to reach the offset below
+        // would be read as a subsystem of 0 and dropped as "not an app".
+        let mut sig = [0u8; 4];
+        f.seek(SeekFrom::Start(pe))?;
+        f.read_exact(&mut sig)?;
+        if &sig != b"PE\0\0" {
+            return Err(io::Error::other("not a PE file"));
+        }
+        // Signature (4) + COFF header (20), then Subsystem 68 bytes into the optional header —
+        // the same offset for PE32 and PE32+, which differ only after it.
+        f.seek(SeekFrom::Start(pe + 4 + 20 + 68))?;
+        let mut sub = [0u8; 2];
+        f.read_exact(&mut sub)?;
+        Ok(u16::from_le_bytes(sub))
+    };
+    // 2 is IMAGE_SUBSYSTEM_WINDOWS_GUI.
+    fs::File::open(exe).and_then(subsystem).map_or(true, |s| s == 2)
+}
+
 /// One app per folder: the .exe named after its folder, else the biggest one. An app folder also
 /// holds updaters, crash handlers and helper processes, and listing all of them is unusable.
 #[cfg(windows)]
@@ -152,7 +182,7 @@ fn apps_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
             if depth > 0 {
                 apps_in(&path, depth - 1, out);
             }
-        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && is_gui_app(&path) {
             let named = path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase() == folder;
             let candidate = (named, meta.len(), path);
             if best.as_ref().is_none_or(|b| (b.0, b.1) < (candidate.0, candidate.1)) {
@@ -221,7 +251,13 @@ impl State {
 /// Matches by bundle name anywhere in the path, so a copy of the app (or macOS's App Translocation
 /// running it from a random folder) is locked too. Helpers inside the bundle match as well.
 fn runs_from(process: &Path, app: &Path) -> bool {
-    app.file_name().is_some_and(|name| process.components().any(|c| c.as_os_str() == name))
+    let Some(name) = app.file_name() else { return false };
+    // Windows filenames are case-insensitive, and the name the process list reports need not be
+    // spelled like the one on disk, so an exact compare would silently stop locking the app.
+    process.components().any(|c| {
+        let part = c.as_os_str();
+        if cfg!(windows) { part.eq_ignore_ascii_case(name) } else { part == name }
+    })
 }
 
 /// Background watcher; clones share one state.
@@ -404,6 +440,23 @@ mod tests {
         assert!(can_lock(Path::new(r"C:\Windows Apps\App\app.exe")), "a folder that merely starts the same way is fine");
         assert!(!can_lock(Path::new(r"C:\Program Files\App\notes.txt")));
         assert!(can_lock(Path::new(r"C:\Program Files\App\app.exe")));
+
+        // Real binaries, so the PE parsing is checked against what Windows actually ships.
+        let system = std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        assert!(is_gui_app(&system.join("explorer.exe")), "explorer is a GUI app");
+        assert!(!is_gui_app(&system.join(r"System32\cmd.exe")), "cmd is a console tool, not an app");
+        assert!(is_gui_app(Path::new("deskmonk-no-such-file.exe")), "unreadable must not hide an app");
+    }
+
+    /// Windows reports process names in whatever case it likes; matching must not care.
+    #[cfg(windows)]
+    #[test]
+    fn matches_process_names_whatever_the_case() {
+        let app = Path::new(r"C:\Program Files\Thing\Thing.exe");
+        assert!(runs_from(Path::new("Thing.exe"), app));
+        assert!(runs_from(Path::new("THING.EXE"), app));
+        assert!(runs_from(Path::new("thing.exe"), app));
+        assert!(!runs_from(Path::new("other.exe"), app));
     }
 
     #[test]
