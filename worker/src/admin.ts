@@ -286,7 +286,9 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
                   SUM(CASE WHEN kind = 'scan' THEN duplicate_bytes END) AS dup, SUM(CASE WHEN kind = 'scan' THEN junk_bytes END) AS junk,
                   SUM(CASE WHEN kind = 'scan' THEN old_download_bytes END) AS old, SUM(CASE WHEN kind = 'scan' THEN large_bytes END) AS large
                 FROM ev`),
-    db.prepare(`WITH ${EV} SELECT version, os, COUNT(DISTINCT install_id) AS n FROM ev WHERE ts >= ?1 GROUP BY version, os`).bind(month),
+    // Each installation once, at the version of its latest event (bare columns come from the MAX(ts) row).
+    db.prepare(`WITH ${EV}, cur AS (SELECT install_id, os, version, MAX(ts) FROM ev WHERE ts >= ?1 AND version IS NOT NULL GROUP BY install_id)
+                SELECT version, os, COUNT(*) AS n FROM cur GROUP BY version, os`).bind(month),
     db.prepare(`WITH ${EV} SELECT client, COUNT(DISTINCT install_id) AS n FROM ev WHERE ts >= ?1 GROUP BY client ORDER BY n DESC`).bind(month),
     db.prepare(`SELECT json_extract(s.value, '$.kind') AS kind, json_extract(s.value, '$.brand') AS brand, COUNT(DISTINCT h.install_id) AS n
                 FROM hardware h, json_each(h.specs) s
@@ -456,17 +458,22 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="muted foot"><b>Came back / still using</b>: of the installs old enough to tell, how many were seen again at least a day / a week after their first event.
       <b>Lost</b>: used in the last 30 days, but not in the last 7.</p>
 
-    <p class="label" style="margin-top:22px">Versions in use, last 30 days</p>
+    <p class="label" style="margin-top:22px">Versions in use, last 30 days <span class="aside">· each installation once, at the version it runs now</span></p>
     <div class="scroll"><table>
-      <tr><th>Version</th>${OSES.map((os) => `<th class="num">${osName(os)}</th>`).join("")}<th class="num">Total</th></tr>
+      <tr><th>Version</th>${OSES.map((os) => `<th class="num">${osName(os)}</th>`).join("")}<th class="num">Total</th><th>Share</th><th>Updates itself</th></tr>
       ${[...new Set(versions.map((v) => v.version))].sort(compareVersions)
-        .map((v) => {
+        .map((v, i) => {
           const n = (os: string) => versions.filter((r) => r.version === v && r.os === os).reduce((a, r) => a + r.n, 0);
-          return `<tr><td>${esc(v)}</td>${OSES.map((os) => `<td class="num">${n(os) || '<span class="muted">0</span>'}</td>`).join("")}
-            <td class="num"><b>${versions.filter((r) => r.version === v).reduce((a, r) => a + r.n, 0)}</b></td></tr>`;
+          const total = versions.filter((r) => r.version === v).reduce((a, r) => a + r.n, 0);
+          const share = Math.round((total / Math.max(1, sum(versions, "n"))) * 100);
+          // The self-updater came with 0.5.0; older copies only update by a manual download.
+          const updates = compareVersions(v, "0.5.0") <= 0 ? "yes" : '<span class="badge warn">no, download by hand</span>';
+          return `<tr><td>${esc(v)}${i === 0 ? ' <span class="badge new">newest</span>' : ""}</td>${OSES.map((os) => `<td class="num">${n(os) || '<span class="muted">0</span>'}</td>`).join("")}
+            <td class="num"><b>${total}</b></td><td class="num">${share}%</td><td>${updates}</td></tr>`;
         })
-        .join("") || `<tr><td colspan="5" class="muted">No installs this month.</td></tr>`}
+        .join("") || `<tr><td colspan="7" class="muted">No installs this month.</td></tr>`}
     </table></div>
+    <p class="muted foot"><b>Updates itself</b>: Macs now; Windows and Linux once their builds are listed in deskmonk.app/update.json.</p>
     <p class="muted foot">Interface: ${clients.map((c) => `${esc(c.client === "tui" ? "terminal" : c.client === "gui" ? "desktop" : c.client)} <b>${c.n}</b>`).join(" · ") || "—"}
       · Store: web ${sum(plans.filter((p) => p.channel === "web"), "n")} · App Store ${sum(plans.filter((p) => p.channel === "appstore"), "n")}</p>
   </section>
