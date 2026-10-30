@@ -52,7 +52,8 @@ fn main() -> eframe::Result {
     } else {
         icon.clone()
     };
-    let options = eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
             .with_min_inner_size([760.0, 480.0])
@@ -62,6 +63,17 @@ fn main() -> eframe::Result {
             .with_icon(Arc::new(window_icon)),
         ..Default::default()
     };
+    // Windows: ask for DX12 rather than letting wgpu choose. Where the only "GPU" is a virtual GL
+    // driver — VMware's SVGA3D, and VM or remote-desktop sessions generally — wgpu prefers that GL
+    // adapter, compiles its shaders, configures the surface and then never presents: a blank white
+    // window and not one line of error. DX12 is on every Windows 10+ machine, falling back to
+    // Microsoft's software renderer, which draws correctly. WGPU_BACKEND still overrides this.
+    #[cfg(windows)]
+    if std::env::var_os("WGPU_BACKEND").is_none()
+        && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup
+    {
+        setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+    }
     eframe::run_native(
         "deskMonk",
         options,
