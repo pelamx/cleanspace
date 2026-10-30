@@ -51,6 +51,49 @@ fn starts() {
     }
 }
 
+/// `starts` only proves the process stays up, and a window that draws nothing passes that: every
+/// Windows release until now was blank and shipped anyway. So look at a frame — a blank one is a
+/// single colour, the real UI is hundreds — and at the adapter, which is what the blankness was
+/// really about: wgpu preferred a virtual GL driver that presented nothing. See `screenshot_tick`
+/// for why the frame alone cannot prove it reached the screen.
+#[test]
+fn draws_a_real_frame() {
+    if !has_display() {
+        return;
+    }
+    let home = temp_home("render");
+    let shot = home.join("frame.txt");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deskmonk"))
+        .env("HOME", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .env("DESKMONK_SCREENSHOT", &shot)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("deskmonk binary runs");
+    // Compositors and software renderers are slow to show the first frame; wait, do not assume.
+    let found = (0..120).any(|_| {
+        std::thread::sleep(Duration::from_millis(250));
+        shot.is_file()
+    });
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut stderr = String::new();
+    let _ = child.stderr.take().unwrap().read_to_string(&mut stderr);
+    assert!(found, "deskmonk never captured a frame in 30s:\n{stderr}");
+
+    let text = std::fs::read_to_string(&shot).unwrap();
+    let field = |name: &str| text.rsplit_once(name).map(|(_, v)| v.split_whitespace().next().unwrap_or("").to_owned());
+    let colors: usize = field("colors=").and_then(|n| n.parse().ok()).unwrap_or(0);
+    let backend = field("backend=").unwrap_or_default();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(colors > 50, "the window drew {colors} distinct colours ({}): it is blank", text.trim());
+    // On Windows the GL adapter is a virtual driver that accepts every call and shows nothing.
+    if cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none() {
+        assert_eq!(backend, "Dx12", "Windows must not fall back to {backend} ({})", text.trim());
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn starts_with_damaged_config() {

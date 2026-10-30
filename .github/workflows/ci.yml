@@ -115,6 +115,16 @@ jobs:
     needs: [test, macos, linux, windows, tui-musl]
     runs-on: ubuntu-latest
     steps:
+      # Without this variable `plan::URL` is None, `is_pro()` is true for everyone and the compiler
+      # drops the whole paywall — a release that can never be bought. v0.3.0 shipped exactly that,
+      # and nothing said a word, so refuse to publish instead of finding out from the sales figures.
+      - name: Refuse to publish a build with no licence server
+        if: vars.DESKMONK_LICENSE_URL == ''
+        run: |
+          echo "::error::DESKMONK_LICENSE_URL is empty, so this build has no paywall: every copy is Pro for good."
+          echo "Set it under Settings → Secrets and variables → Actions → Variables, then push the tag again."
+          echo "Shipping free on purpose? Delete this step."
+          exit 1
       - uses: actions/download-artifact@v4
         with:
           path: dist

@@ -81,6 +81,10 @@ fn main() -> eframe::Result {
             setup_style(&cc.egui_ctx);
             cc.egui_ctx.set_theme(saved_theme());
             let mut app = App::default();
+            app.backend = cc
+                .wgpu_render_state
+                .as_ref()
+                .map_or_else(|| "none".into(), |r| format!("{:?}", r.adapter.get_info().backend));
             app.detect_hardware(cc.egui_ctx.clone());
             if cfg!(any(target_os = "macos", windows)) {
                 let (tx, rx) = channel();
@@ -318,6 +322,10 @@ struct App {
     app_filter: String,
     /// A lock removal waiting for the password.
     unlock: Option<Unlock>,
+    /// Frames drawn, counted only for the DESKMONK_SCREENSHOT test hook.
+    shot_frames: u32,
+    /// Which wgpu backend got picked; written by the DESKMONK_SCREENSHOT hook.
+    backend: String,
     icons: Icons,
     /// Vault: the picked file, folder or vault; the typed passwords; the running job and its result.
     vault_target: Option<PathBuf>,
@@ -379,6 +387,8 @@ impl Default for App {
             installed: None,
             app_filter: String::new(),
             unlock: None,
+            shot_frames: 0,
+            backend: String::new(),
             icons: Icons::default(),
             vault_target: None,
             vault_pw: String::new(),
@@ -1709,6 +1719,41 @@ impl App {
         clicked
     }
 
+    /// Test hook (`DESKMONK_SCREENSHOT=<file>`): once the UI has settled, write down the adapter
+    /// in use and how many colours one frame contains. A window that draws nothing still runs,
+    /// answers the window manager and exits cleanly, so a liveness check passes it — which is how
+    /// a release that was blank on every Windows machine shipped without anyone noticing.
+    ///
+    /// shortcut: egui renders the capture to a texture of its own rather than reading back the
+    /// surface, so this proves egui drew a frame, not that the frame was presented. The blank
+    /// window was a presentation failure, and the adapter line is what guards against it; catching
+    /// it directly needs a screenshot taken from the OS, outside the process.
+    fn screenshot_tick(&mut self, ctx: &egui::Context) {
+        let Some(path) = std::env::var_os("DESKMONK_SCREENSHOT") else {
+            return;
+        };
+        self.shot_frames += 1;
+        // Not the first frame: fonts, the logo texture and the sidebar all land over the first few.
+        if self.shot_frames == 30 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        let shot = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = shot {
+            let colors: std::collections::HashSet<[u8; 4]> = image.pixels.iter().map(|p| p.to_array()).collect();
+            let _ = std::fs::write(
+                PathBuf::from(path),
+                format!("{}x{} colors={} backend={}\n", image.width(), image.height(), colors.len(), self.backend),
+            );
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ctx.request_repaint();
+    }
+
     /// A locked app was stopped: show the password prompt and bring deskMonk forward. Without this
     /// the app is killed and never asks for anything, which is worse than not locking it at all.
     fn poll_blocked(&mut self, ctx: &egui::Context) {
@@ -1886,6 +1931,7 @@ impl eframe::App for App {
         // On macOS `logic` already did this while the window may have been hidden; draining twice
         // is harmless, and everywhere else this is the only place the prompt can appear.
         self.poll_blocked(&ctx);
+        self.screenshot_tick(&ctx);
         if std::mem::take(&mut self.autostart) {
             self.start_scan(ctx.clone());
         }
