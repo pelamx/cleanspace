@@ -117,6 +117,8 @@ h2.big { font-size: 2.1rem; margin: .2em 0 .4em; line-height: 1.15; }
 .downloads { display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); margin-top: 24px; }
 .dl { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: flex; flex-direction: column; gap: 8px; }
 .dl.mine { border-color: var(--brand); }
+.dl .os { height: 48px; display: flex; align-items: center; }
+.dl .os img { width: 44px; height: 44px; object-fit: contain; display: block; }
 .dl h3 { margin: 0; font-size: 1.15rem; }
 .dl p { color: var(--muted); font-size: .88rem; margin: 0; flex: 1; }
 .dl a.btn { text-align: center; margin-top: 8px; }
