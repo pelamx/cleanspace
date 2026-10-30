@@ -211,7 +211,7 @@ fn install(target: &Path, dmg: &[u8]) -> Result<(), String> {
     let (image, mount) = (work.join("update.dmg"), work.join("mnt"));
     fs::write(&image, dmg).map_err(|e| e.to_string())?;
     let run = |cmd: &mut Command| cmd.status().map_err(|e| e.to_string()).and_then(|s| if s.success() { Ok(()) } else { Err(format!("{cmd:?} failed")) });
-    run(Command::new("hdiutil").args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"]).arg(&mount).arg(&image))?;
+    run(Command::new("hdiutil").args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-quiet", "-mountpoint"]).arg(&mount).arg(&image))?;
     let result = (|| {
         let app = mount.join("deskMonk.app");
         let requirement = format!("=anchor apple generic and certificate leaf[subject.OU] = \"{TEAM_ID}\"");

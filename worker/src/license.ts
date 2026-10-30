@@ -254,7 +254,10 @@ export async function refundLast(env: LicenseEnv, subId: string, reason: string)
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const v = (await res.json().catch(() => ({}))) as any;
-    return { ok: res.ok, v, why: `${res.status} ${v?.error?.detail ?? v?.error?.code ?? ""}`.trim() };
+    const why = `${res.status} ${v?.error?.detail ?? v?.error?.code ?? ""}`.trim();
+    // 403 = the key lacks a permission; Paddle lets you tick more on an existing key.
+    const fix = res.status === 403 ? ". In Paddle > Developer tools > Authentication, give the API key: Transactions read, Adjustments write, Subscriptions write" : "";
+    return { ok: res.ok, v, why: why + fix };
   };
   try {
     const list = await call("GET", `/transactions?subscription_id=${encodeURIComponent(subId)}&status=completed&order_by=billed_at[DESC]&per_page=1`);
