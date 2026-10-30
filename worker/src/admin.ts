@@ -25,6 +25,8 @@ const LIVE = 300;
 /** Phone events minus the operator's own installations, and each installation's first and last event. */
 const MO = "mo AS (SELECT * FROM events WHERE os IN ('ios', 'android') AND install_id NOT IN (SELECT install_id FROM ignored_installs))";
 const MO_F = "f AS (SELECT install_id, MAX(os) AS os, MIN(ts) AS first, MAX(ts) AS last FROM mo GROUP BY install_id)";
+/** Phone or tablet, as each app reports it from its screen size (hardware.dart, spec kind "Tür"). */
+const MO_T = "t AS (SELECT h.install_id, json_extract(s.value, '$.name') AS type FROM hardware h, json_each(h.specs) s WHERE json_extract(s.value, '$.kind') = 'Tür')";
 const STORE_NAME: Record<string, string> = { appstore: "App Store", playstore: "Google Play" };
 /** Events minus the operator's own installations. */
 const EV = "ev AS (SELECT * FROM events WHERE install_id NOT IN (SELECT install_id FROM ignored_installs))";
@@ -636,12 +638,28 @@ function versionTable(versions: Row[], oses: string[], selfUpdates = false): str
 
 // ---------- mobile ----------
 
-interface MobileNow { counts: Row[]; recent: Row[] }
-interface MobileData { lifecycle: Row[]; usage: Row[]; features: Row[]; active: Row[]; fresh: Row[]; phones: Row[]; countries: Row[]; types: Row[] }
+interface MobileNow { counts: Row[]; recent: Row[]; devices: Row[] }
+interface MobileData { lifecycle: Row[]; usage: Row[]; features: Row[]; active: Row[]; fresh: Row[]; phones: Row[]; countries: Row[]; devices: Row[] }
+
+const DEVICES: [string, string, string][] = [["ios", "Phone", "iPhone"], ["ios", "Tablet", "iPad"], ["android", "Phone", "Android phone"], ["android", "Tablet", "Android tablet"]];
+
+function deviceName(os: string, type: unknown): string {
+  return DEVICES.find(([o, t]) => o === os && t === type)?.[2] ?? `${osName(os)}, type not reported`;
+}
+
+/** One row for each of the four devices, even at zero, plus installs that haven't said which they are. */
+function deviceRows(rows: Row[]): Row[] {
+  const known = (r: Row) => DEVICES.some(([o, t]) => o === r.os && t === r.type);
+  return [...DEVICES.map(([os, type]) => rows.find((r) => r.os === os && r.type === type) ?? { os, type }), ...rows.filter((r) => !known(r))];
+}
+
+function deviceCell(r: Row): string {
+  return `${osIcon(r.os)} ${esc(deviceName(r.os, r.type))}`;
+}
 
 async function mobileLiveData(db: D1Database, t: number): Promise<MobileNow> {
   const today = Math.floor((t + TZ) / DAY) * DAY - TZ;
-  const [counts, recent] = (
+  const [counts, recent, devices] = (
     await db.batch([
       db.prepare(`WITH ${MO}, ${MO_F} SELECT os, SUM(last >= ?1) AS live, SUM(last >= ?2) AS hour, SUM(last >= ?3) AS today,
                     SUM(last >= ?4) AS week, SUM(last >= ?5) AS month FROM f GROUP BY os`).bind(t - LIVE, t - 3600, today, t - 7 * DAY, t - 30 * DAY),
@@ -649,11 +667,15 @@ async function mobileLiveData(db: D1Database, t: number): Promise<MobileNow> {
       db.prepare(`WITH ${MO} SELECT install_id AS id, os, country, version, plan, MAX(ts) AS last_seen,
                     (SELECT x.kind FROM events x WHERE x.install_id = mo.install_id AND x.kind != 'ping' ORDER BY x.ts DESC LIMIT 1) AS action,
                     (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
-                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone
+                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone,
+                    (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
+                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Tür' LIMIT 1) AS type
                   FROM mo GROUP BY install_id ORDER BY last_seen DESC LIMIT 15`),
+      db.prepare(`WITH ${MO}, ${MO_F}, ${MO_T} SELECT f.os, t.type, SUM(last >= ?1) AS live, SUM(last >= ?2) AS hour, SUM(last >= ?3) AS today,
+                    SUM(last >= ?4) AS week, SUM(last >= ?5) AS month FROM f LEFT JOIN t ON t.install_id = f.install_id GROUP BY 1, 2`).bind(t - LIVE, t - 3600, today, t - 7 * DAY, t - 30 * DAY),
     ])
   ).map((r) => (r.results ?? []) as Row[]);
-  return { counts, recent };
+  return { counts, recent, devices };
 }
 
 async function mobileData(db: D1Database, t: number): Promise<MobileData> {
@@ -663,7 +685,7 @@ async function mobileData(db: D1Database, t: number): Promise<MobileData> {
   const back = (name: string, age: number, ago: number) =>
     `SUM(first <= ${ago}) AS ${name}_base, SUM(first <= ${ago} AND last - first >= ${age}) AS ${name}_back`;
   const seen = (kind: string) => `COUNT(DISTINCT CASE WHEN kind = '${kind}' THEN install_id END)`;
-  const [lifecycle, usage, features, active, fresh, phones, countries, types] = (
+  const [lifecycle, usage, features, active, fresh, phones, countries, devices] = (
     await db.batch([
       db.prepare(`WITH ${MO}, ${MO_F} SELECT os, COUNT(*) AS total, SUM(first >= ?1) AS new_today, SUM(first >= ?2 AND first < ?1) AS new_yesterday,
                     SUM(last >= ?1) AS today, SUM(last >= ?4) AS month,
@@ -684,12 +706,17 @@ async function mobileData(db: D1Database, t: number): Promise<MobileData> {
       db.prepare(`WITH ${MO} SELECT json_extract(s.value, '$.name') AS name, COUNT(DISTINCT h.install_id) AS n FROM hardware h, json_each(h.specs) s
                   WHERE json_extract(s.value, '$.kind') = 'Telefon' AND h.install_id IN (SELECT install_id FROM mo) GROUP BY 1 ORDER BY n DESC LIMIT 8`),
       db.prepare(`WITH ${MO} SELECT COALESCE(country, '?') AS country, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1 ORDER BY n DESC LIMIT 8`).bind(month),
-      // Phone or tablet, sent by the app from the screen size (hardware.dart, kind "Tür").
-      db.prepare(`WITH ${MO} SELECT json_extract(s.value, '$.name') AS name, COUNT(DISTINCT h.install_id) AS n FROM hardware h, json_each(h.specs) s
-                  WHERE json_extract(s.value, '$.kind') = 'Tür' AND h.install_id IN (SELECT install_id FROM mo) GROUP BY 1 ORDER BY n DESC`),
+      // The four devices side by side. Usage is the last 30 days; Pro is each installation's latest plan.
+      db.prepare(`WITH ${MO}, ${MO_F}, ${MO_T},
+                    p AS (SELECT install_id, plan, MAX(ts) FROM mo WHERE plan IS NOT NULL GROUP BY install_id),
+                    u AS (SELECT install_id, MAX(kind = 'scan') AS scanned, MAX(kind = 'clean') AS cleaned, MAX(kind = 'vault') AS vaulted, MAX(kind = 'focus') AS focused, MAX(kind = 'bought') AS bought
+                      FROM mo WHERE ts >= ?1 GROUP BY install_id)
+                  SELECT f.os, t.type, COUNT(*) AS total, SUM(first >= ?2) AS new_today, SUM(last >= ?1) AS active, SUM(p.plan = 'pro') AS pro,
+                    SUM(u.scanned) AS scanned, SUM(u.cleaned) AS cleaned, SUM(u.vaulted) AS vaulted, SUM(u.focused) AS focused, SUM(u.bought) AS bought
+                  FROM f LEFT JOIN t ON t.install_id = f.install_id LEFT JOIN p ON p.install_id = f.install_id LEFT JOIN u ON u.install_id = f.install_id GROUP BY 1, 2`).bind(month, today),
     ])
   ).map((r) => (r.results ?? []) as Row[]);
-  return { lifecycle, usage, features, active, fresh, phones, countries, types };
+  return { lifecycle, usage, features, active, fresh, phones, countries, devices };
 }
 
 const ACTION: Record<string, string> = { open: "Opened the app", scan: "Scanned", clean: "Cleaned", vault: "Used the Vault", focus: "Finished a focus", pro: "Looked at Pro", bought: "Bought Pro", applock: "Locked an app" };
@@ -704,14 +731,14 @@ function liveness(last: number, t: number): [string, string] {
 }
 
 /** Who is on the app right now and who was lately. The page refetches this part every 30 seconds. */
-export function mobileLive({ counts, recent }: MobileNow, t: number): string {
+export function mobileLive({ counts, recent, devices }: MobileNow, t: number): string {
   const n = (f: string) => Object.fromEntries(counts.map((r) => [r.os, Number(r[f]) || 0]));
   const total = (f: string) => counts.reduce((a, r) => a + (Number(r[f]) || 0), 0);
   const box = (f: string, icon: string, tone: string, title: string, hint: string, cls = "") =>
     tile({ icon, tone, title, hint, cls, value: total(f), rows: osBars(n(f), String, MOBILE) });
   const clock = new Date((t + TZ) * 1000).toISOString().slice(11, 16);
   return `<section class="card" id="mobile-live">
-    <p class="label"><span class="dot live"></span>Mobile users, live <span class="aside">· iOS and Android · updated ${clock} Turkey time, refreshes by itself</span></p>
+    <p class="label"><span class="dot live"></span>Phone and tablet users, live <span class="aside">· iOS and Android · updated ${clock} Turkey time, refreshes by itself</span></p>
     <div class="grid five">
       ${box("live", "phone", "t-green", "Live now", "App on screen, last 5 minutes", "live")}
       ${box("hour", "clock", "t-teal", "Last hour", "Used the app")}
@@ -719,18 +746,25 @@ export function mobileLive({ counts, recent }: MobileNow, t: number): string {
       ${box("week", "bars", "t-violet", "This week", "Weekly active")}
       ${box("month", "chart", "t-orange", "This month", "Monthly active")}
     </div>
+    <p class="label" style="margin-top:20px">By device</p>
+    <div class="scroll"><table>
+      <tr><th>Device</th><th class="num">Live now</th><th class="num">Last hour</th><th class="num">Today</th><th class="num">This week</th><th class="num">This month</th></tr>
+      ${deviceRows(devices)
+        .map((d) => `<tr><td>${deviceCell(d)}</td>${["live", "hour", "today", "week", "month"].map((f) => `<td class="num">${d[f] ?? 0}</td>`).join("")}</tr>`)
+        .join("")}
+    </table></div>
     <p class="label" style="margin-top:20px">Latest seen</p>
     <div class="scroll"><table>
-      <tr><th>Status</th><th>Installation</th><th>Phone</th><th>Where</th><th>Version</th><th>Plan</th><th>Last seen</th><th>Last did</th></tr>
+      <tr><th>Status</th><th>Installation</th><th>Device</th><th>Where</th><th>Version</th><th>Plan</th><th>Last seen</th><th>Last did</th></tr>
       ${recent
         .map((u) => {
           const [cls, label] = liveness(u.last_seen, t);
           return `<tr><td><span class="dot ${cls}"></span>${label}</td><td><a href="/admin/user/${encodeURIComponent(u.id)}"><code>${esc(String(u.id).slice(0, 8))}</code></a></td>
-            <td>${osIcon(u.os)} ${esc(u.phone ?? osName(u.os))}</td><td>${u.country ? `${flag(u.country)} ${esc(u.country)}` : '<span class="muted">—</span>'}</td>
+            <td>${deviceCell(u)}${u.phone ? ` <span class="muted">· ${esc(u.phone)}</span>` : ""}</td><td>${u.country ? `${flag(u.country)} ${esc(u.country)}` : '<span class="muted">—</span>'}</td>
             <td>${esc(u.version ?? "")}</td><td>${u.plan === "pro" ? '<span class="badge on">Pro</span>' : '<span class="badge">Free</span>'}</td>
             <td>${ago(u.last_seen)}</td><td class="muted">${ACTION[u.action] ?? "—"}</td></tr>`;
         })
-        .join("") || `<tr><td colspan="8" class="muted">No phone has reported yet.</td></tr>`}
+        .join("") || `<tr><td colspan="8" class="muted">No phone or tablet has reported yet.</td></tr>`}
     </table></div>
   </section>`;
 }
@@ -788,7 +822,15 @@ export function mobileCard(m: MobileData, versions: Row[], t: number): string {
           <td>${ratio(r.day_back ?? 0, r.day_base ?? 0)}</td><td>${ratio(r.week_back ?? 0, r.week_base ?? 0)}</td><td>${ratio(r.month_back ?? 0, r.month_base ?? 0)}</td>${num(r.dormant)}${num(r.gone)}</tr>`)
         .join("")}
     </table></div>
-    <p class="muted foot"><b>Dormant</b>: last seen 7 to 30 days ago. <b>Gone</b>: not seen for over 30 days; a phone never says it uninstalled the app.</p>
+    <p class="muted foot"><b>Dormant</b>: last seen 7 to 30 days ago. <b>Gone</b>: not seen for over 30 days; a phone or tablet never says it uninstalled the app.</p>
+    <p class="label" style="margin-top:22px">By device <span class="aside">· installs and Pro all time, the rest last 30 days</span></p>
+    <div class="scroll"><table>
+      <tr><th>Device</th><th class="num">Installs</th><th class="num">New today</th><th class="num">Active</th><th class="num">Pro now</th><th class="num">Scanned</th><th class="num">Cleaned</th><th class="num">Vault</th><th class="num">Focus</th><th class="num">Bought</th></tr>
+      ${deviceRows(m.devices)
+        .map((d) => `<tr><td>${deviceCell(d)}</td>${["total", "new_today", "active", "pro", "scanned", "cleaned", "vaulted", "focused", "bought"].map((f) => num(d[f])).join("")}</tr>`)
+        .join("")}
+    </table></div>
+    <p class="muted foot">The type comes from users who allowed the stats. The others appear as "type not reported".</p>
     <div class="two">
       <div><p class="label">From first use to Pro</p><div class="scroll"><table>
         <tr><th>Step</th><th class="num">iOS</th><th class="num">Android</th><th class="num">Total</th><th>Of previous step</th></tr>
@@ -804,8 +846,7 @@ export function mobileCard(m: MobileData, versions: Row[], t: number): string {
     </div>
     <div class="two">
       <div><p class="label">What opened the Pro sheet</p>${sources.length ? hbars(sources.map(([d, n]) => [SOURCE[d] ?? esc(d || "—"), n]), String) : '<p class="muted">Nothing yet.</p>'}</div>
-      <div><p class="label">Phone or tablet</p>${m.types.length ? hbars(m.types.map((p) => [esc(p.name), p.n]), String) : '<p class="muted">Reported by app versions with tablet support.</p>'}</div>
-      <div><p class="label">Devices</p>${m.phones.length ? hbars(m.phones.map((p) => [esc(p.name), p.n]), String) : '<p class="muted">No phone has reported yet.</p>'}</div>
+      <div><p class="label">Device models</p>${m.phones.length ? hbars(m.phones.map((p) => [esc(p.name), p.n]), String) : '<p class="muted">No phone or tablet has reported yet.</p>'}</div>
       <div><p class="label">Countries</p>${m.countries.length ? hbars(m.countries.map((c) => [`${flag(c.country)} ${esc(countryName(c.country))}`, c.n]), String) : '<p class="muted">Nothing yet.</p>'}</div>
     </div>
     <p class="label" style="margin-top:22px">Mobile versions in use</p>

@@ -43,8 +43,9 @@ test("mobile live: counts, status of each phone, and what a phone reports is esc
   const html = mobileLive(
     {
       counts: [{ os: "ios", live: 2, hour: 3, today: 4, week: 5, month: 6 }, { os: "android", live: 1, hour: 1, today: 1, week: 1, month: 1 }],
+      devices: [{ os: "ios", type: "Tablet", live: 7, hour: 8, today: 9, week: 10, month: 11 }, { os: "android", type: null, live: 12 }],
       recent: [
-        { id: "aaaaaaaa-1", os: "ios", country: "TR", version: "1.0.0", plan: "pro", last_seen: t - 60, action: "clean", phone: "<b>iPhone</b>" },
+        { id: "aaaaaaaa-1", os: "ios", country: "TR", version: "1.0.0", plan: "pro", last_seen: t - 60, action: "clean", phone: "<b>iPhone</b>", type: "Phone" },
         { id: "bbbbbbbb-2", os: "android", country: null, version: "1.0.0", plan: "free", last_seen: t - 10 * DAY_S, action: null, phone: null },
       ],
     },
@@ -56,7 +57,9 @@ test("mobile live: counts, status of each phone, and what a phone reports is esc
   expect(html).toMatch(/dot live"><\/span>Live<\/td><td><a href="\/admin\/user\/aaaaaaaa-1"/);
   expect(html).toMatch(/dot dormant"><\/span>Dormant/);
   expect(html).toContain("Cleaned");
-  expect(mobileLive({ counts: [], recent: [] }, t)).toContain("No phone has reported yet");
+  // All four devices are always listed, and installs that didn't say which they are stay visible.
+  expect(html).toMatch(/iPhone[\s\S]*iPad<\/td><td class="num">7<\/td><td class="num">8<\/td><td class="num">9<\/td><td class="num">10<\/td><td class="num">11<\/td>[\s\S]*Android phone[\s\S]*Android tablet[\s\S]*Android, type not reported<\/td><td class="num">12</);
+  expect(mobileLive({ counts: [], recent: [], devices: [] }, t)).toContain("No phone or tablet has reported yet");
 });
 
 test("mobile card: platforms add up, and no desktop numbers", () => {
@@ -68,14 +71,15 @@ test("mobile card: platforms add up, and no desktop numbers", () => {
       usage: [{ os: "ios", active: 4, allowed: 4, scanned: 3, cleaned: 2, saw_pro: 2, bought: 1, pro: 1 }, { os: "android", active: 2, allowed: 1, scanned: 1, cleaned: 1, saw_pro: 0, bought: 0, pro: 0 }],
       features: [{ os: "ios", kind: "clean", detail: "", n: 5, users: 2, bytes: 2048 }, { os: "ios", kind: "pro", detail: "topbar", n: 2, users: 2, bytes: 0 }, { os: "android", kind: "pro", detail: "clean_limit", n: 9, users: 1, bytes: 0 }],
       active: [], fresh: [], phones: [{ name: "Pixel <9>", n: 2 }], countries: [{ country: "TR", n: 3 }],
-      types: [{ name: "Phone", n: 4 }, { name: "Tablet", n: 1 }],
+      devices: [{ os: "android", type: "Tablet", total: 21, new_today: 22, active: 23, pro: 24, scanned: 25, cleaned: 26, vaulted: 27, focused: 28, bought: 29 }, { os: "ios", type: "Phone", total: 4 }],
     },
     [{ version: "1.1.0", os: "ios", n: 5 }, { version: "1.0.0", os: "android", n: 2 }, { version: "0.3.0", os: "macos", n: 800 }],
     t,
   );
   expect(html).toContain("2.0 KB");
   expect(html).toContain("Pixel &lt;9&gt;");
-  expect(html).toMatch(/Phone or tablet[\s\S]*Tablet/);
+  expect(html).toMatch(/Android tablet<\/td>(<td class="num">2\d<\/td>){9}/);
+  expect(html).toContain("iPad");
   expect(html).not.toContain("0.3.0");
   expect(html.indexOf("1.1.0")).toBeLessThan(html.indexOf("1.0.0"));
   // Stickiness: 3 active today of 6 this month, across both platforms.
