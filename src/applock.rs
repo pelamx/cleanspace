@@ -133,10 +133,21 @@ pub fn installed_apps() -> Vec<PathBuf> {
     // Per-user installs (Chrome, VS Code, Spotify, most Electron apps) live here, not in Program Files.
     dirs.extend(dirs::data_local_dir().map(|d| d.join("Programs")));
     let mut apps = Vec::new();
-    for dir in dirs {
+    for dir in distinct(dirs) {
         apps_in(&dir, 2, &mut apps);
     }
     sorted(apps)
+}
+
+/// The program folders, each once. For a 64-bit process `ProgramFiles` and `ProgramW6432` are the
+/// same folder, and walking both lists every app twice. [`sorted`] cannot clean that up afterwards:
+/// it orders by name, which leaves the two copies of a name separated by the 32-bit one.
+#[cfg(windows)]
+fn distinct(mut dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    let key = |d: &PathBuf| d.to_string_lossy().to_lowercase().trim_end_matches('\\').to_owned();
+    dirs.sort_by_key(key);
+    dirs.dedup_by_key(|d| key(d));
+    dirs
 }
 
 /// Windows marks GUI programs in the PE header. Console tools (bash, gh, 7za, updaters) share the
@@ -446,6 +457,17 @@ mod tests {
         assert!(is_gui_app(&system.join("explorer.exe")), "explorer is a GUI app");
         assert!(!is_gui_app(&system.join(r"System32\cmd.exe")), "cmd is a console tool, not an app");
         assert!(is_gui_app(Path::new("deskmonk-no-such-file.exe")), "unreadable must not hide an app");
+    }
+
+    /// Program Files is handed to us twice under two names, so every app appeared twice.
+    #[cfg(windows)]
+    #[test]
+    fn walks_each_program_folder_once() {
+        let dirs = |v: &[&str]| distinct(v.iter().map(PathBuf::from).collect()).len();
+        // ProgramFiles and ProgramW6432, as Windows actually sets them.
+        assert_eq!(dirs(&[r"C:\Program Files", r"C:\Program Files (x86)", r"C:\Program Files"]), 2);
+        assert_eq!(dirs(&[r"C:\Program Files", r"c:\program files\"]), 1, "case and a trailing slash are the same folder");
+        assert_eq!(dirs(&[r"C:\Program Files", r"C:\Program Files (x86)"]), 2, "these are genuinely different");
     }
 
     /// Windows reports process names in whatever case it likes; matching must not care.
