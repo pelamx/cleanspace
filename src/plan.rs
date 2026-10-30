@@ -142,7 +142,12 @@ pub fn vault_too_big(size: u64) -> String {
 /// Returns the key to keep and the end of the paid period (0 = not Pro).
 pub fn validate(key: &str, install_id: &str) -> Result<(String, u64), String> {
     let v = post("/api/license/validate", serde_json::json!({ "key": key, "install_id": install_id }))?;
-    Ok((v["key"].as_str().unwrap_or(key).to_string(), v["pro_until"].as_u64().unwrap_or(0)))
+    Ok((v["key"].as_str().unwrap_or(key).to_string(), unexpired(v["pro_until"].as_u64().unwrap_or(0), now())))
+}
+
+/// `until`, or 0 when the paid period and its grace time are over, so a lapsed key reads as not Pro.
+fn unexpired(until: u64, now: u64) -> u64 {
+    if until + GRACE >= now { until } else { 0 }
 }
 
 /// Paddle's page to cancel or change the subscription.
@@ -246,6 +251,13 @@ mod tests {
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(19_782), "2024-02-29");
         assert_eq!(civil(20_755), "2026-10-29");
+    }
+
+    #[test]
+    fn lapsed_license_reads_as_not_pro() {
+        assert_eq!(unexpired(1000, 1000 + GRACE), 1000);
+        assert_eq!(unexpired(1000, 1001 + GRACE), 0);
+        assert_eq!(unexpired(0, 1000 + GRACE), 0);
     }
 
     #[test]
