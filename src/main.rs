@@ -81,11 +81,11 @@ fn main() -> eframe::Result {
             setup_style(&cc.egui_ctx);
             cc.egui_ctx.set_theme(saved_theme());
             let mut app = App::default();
+            app.detect_hardware(cc.egui_ctx.clone());
             app.backend = cc
                 .wgpu_render_state
                 .as_ref()
                 .map_or_else(|| "none".into(), |r| format!("{:?}", r.adapter.get_info().backend));
-            app.detect_hardware(cc.egui_ctx.clone());
             if cfg!(any(target_os = "macos", windows)) {
                 let (tx, rx) = channel();
                 let ctx = cc.egui_ctx.clone();
