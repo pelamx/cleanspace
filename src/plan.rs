@@ -156,6 +156,20 @@ pub fn buy_url(install_id: &str, yearly: bool) -> Option<String> {
     Some(format!("{}/buy?install={install_id}&plan={}", URL?, if yearly { "yearly" } else { "monthly" }))
 }
 
+/// Frees this computer's place on `key` (one of 3), so the key can be used on another computer.
+pub fn deactivate(key: &str, install_id: &str) -> Result<(), String> {
+    post("/api/license/deactivate", serde_json::json!({ "key": key, "install_id": install_id })).map(|_| ())
+}
+
+/// Sends the contact form to the developer (worker/src/mail.ts); `email` may be empty.
+pub fn contact(email: &str, message: &str, install_id: &str) -> Result<(), String> {
+    post(
+        "/api/contact",
+        serde_json::json!({ "email": email, "message": message, "install_id": install_id, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS }),
+    )
+    .map(|_| ())
+}
+
 fn post(route: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
     let base = URL.ok_or("no license server")?;
     let offline = |e: ureq::Error| tf!("Sunucuya ulaşılamadı: {e}", "Could not reach the server: {e}", "No se pudo contactar con el servidor: {e}");
@@ -172,6 +186,12 @@ fn post(route: &str, body: serde_json::Value) -> Result<serde_json::Value, Strin
     match v["error"].as_str() {
         None if resp.status().is_success() => Ok(v),
         Some("unknown_key") => Err(t("Lisans anahtarı bulunamadı", "License key not found", "Clave de licencia no encontrada").into()),
+        Some("bad_email") => Err(t("E-posta adresi geçersiz", "The email address is not valid", "La dirección de correo no es válida").into()),
+        Some("too_many") => Err(t(
+            "Çok fazla mesaj gönderildi, lütfen biraz sonra tekrar deneyin",
+            "Too many messages were sent, please try again a bit later",
+            "Se enviaron demasiados mensajes, inténtelo de nuevo más tarde",
+        ).into()),
         Some("too_many_devices") => Err(t(
             "Bu anahtar zaten 3 bilgisayarda kullanılıyor",
             "This key is already used on 3 computers",

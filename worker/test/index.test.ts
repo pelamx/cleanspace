@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
 import { compareVersions, esc, hardwareHtml, humanSize, worldMap } from "../src/admin";
 import { parseEvent } from "../src/index";
-import { inCidr, mayActivate, newKey, periodEnd, planOf, verifySignature } from "../src/license";
+import { handleLicense, inCidr, mayActivate, refundLast, newKey, periodEnd, planOf, verifySignature } from "../src/license";
+import { handleMail, keyMail, weekNumbers, weeklyText } from "../src/mail";
 import { buyPage, js, pickLang } from "../src/pages";
 import { LANGS, USD, money, word } from "../src/i18n";
 
@@ -132,4 +133,113 @@ test("webhook sender check: IPv4 inside Paddle's CIDR blocks only", () => {
   expect(inCidr("", "34.237.3.244/32")).toBe(false);
   expect(inCidr("2001:db8::1", "34.237.3.244/32")).toBe(false);
   expect(inCidr("34.237.3.244", "34.237.3.244/33")).toBe(false);
+});
+
+// ---------- mail ----------
+
+/** schema.sql in Node's SQLite, behind the few D1 calls mail.ts uses. */
+function memoryDb(): any {
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  db.exec(require("node:fs").readFileSync(`${__dirname}/../schema.sql`, "utf8"));
+  const prepare = (sql: string) => {
+    const run = (args: unknown[]) => ({
+      first: async () => db.prepare(sql).get(...args) ?? null,
+      all: async () => ({ results: db.prepare(sql).all(...args) }),
+      run: async () => db.prepare(sql).run(...args),
+    });
+    return { bind: (...args: unknown[]) => run(args), ...run([]) };
+  };
+  return { prepare, exec: (sql: string) => db.exec(sql), batch: async (stmts: any[]) => Promise.all(stmts.map((st) => st.run())) };
+}
+
+test("the key mail carries the key and how to use it", () => {
+  const m = keyMail("DM-ABCD-EFGH-JKLM", "yearly");
+  expect(m.text).toContain("DM-ABCD-EFGH-JKLM");
+  expect(m.text).toContain("Have a license key?");
+  expect(m.text).toContain("https://deskmonk.app/account");
+});
+
+test("contact form: checks input, keeps the message, limits how many", async () => {
+  const env = { DB: memoryDb(), OWNER_EMAIL: "owner@example.com" }; // no RESEND_API_KEY: nothing is sent
+  const post = (body: unknown) =>
+    handleMail(new Request("https://deskmonk.app/api/contact", { method: "POST", body: JSON.stringify(body) }), env, "/api/contact");
+  expect((await handleMail(new Request("https://deskmonk.app/x"), env, "/x"))).toBeNull();
+  expect((await post({ message: "", install_id: "a" }))!.status).toBe(400);
+  expect((await post({ message: "hi" }))!.status).toBe(400);
+  expect((await post({ message: "hi", install_id: "a", email: "not an email" }))!.status).toBe(400);
+  for (let i = 0; i < 3; i++) expect((await post({ message: `hi ${i}`, install_id: "a", email: "me@example.com", version: "0.5.0", os: "macos" }))!.status).toBe(200);
+  expect((await post({ message: "4th", install_id: "a" }))!.status).toBe(429);
+  expect((await post({ message: "other user", install_id: "b" }))!.status).toBe(200);
+  const rows = (await env.DB.prepare("SELECT install_id, email, message FROM messages ORDER BY id").all()).results;
+  expect(rows.map((r: any) => r.message)).toEqual(["hi 0", "hi 1", "hi 2", "other user"]);
+  expect(rows[0].email).toBe("me@example.com");
+});
+
+test("weekly numbers leave out the operator's own installs", async () => {
+  const db = memoryDb();
+  const now = 2_000_000_000, day = 86400;
+  const ev = (id: string, ts: number, kind = "open") =>
+    db.exec(`INSERT INTO events(ts, install_id, version, os, client, kind, files, bytes, duplicate_bytes, junk_bytes, old_download_bytes, large_bytes)
+             VALUES (${ts}, '${id}', '0.5.0', '${id === "win" ? "windows" : "macos"}', 'gui', '${kind}', 0, 0, 0, 0, 0, 0)`);
+  ev("old", now - 30 * day); // installed long ago, still used
+  ev("old", now - day);
+  ev("new", now - 2 * day);
+  ev("new", now - 2 * day, "scan");
+  ev("win", now - 3 * day);
+  ev("gone", now - 20 * day); // not used this week
+  ev("mine", now - day);
+  db.exec(`INSERT INTO ignored_installs VALUES ('mine', 0)`);
+  db.exec(`INSERT INTO subscriptions(id, customer_id, status, period_end, license_key, event_at, plan, created_at) VALUES
+    ('s1', 'c1', 'active', ${now + 20 * day}, 'K1', '', 'monthly', ${now - day}),
+    ('s2', 'c2', 'active', ${now + 300 * day}, 'K2', '', 'yearly', ${now - 40 * day}),
+    ('s3', 'c3', 'canceled', ${now - 2 * day}, 'K3', '', 'monthly', ${now - 60 * day}),
+    ('s4', 'manual', 'active', ${now + 9 * day}, 'K4', '', 'yearly', ${now - day})`);
+  const n = await weekNumbers(db, now);
+  expect(n).toMatchObject({ newInstalls: 2, activeInstalls: 3, opens: 3, newSubs: 1, monthly: 1, yearly: 1, canceled: 1, messages: 0 });
+  expect(n.os).toEqual([{ os: "macos", n: 2 }, { os: "windows", n: 1 }]);
+  expect(weeklyText(n)).toContain("New: 2");
+});
+
+test("removing a computer frees its place, also on the computer it was bought on", async () => {
+  const env = { DB: memoryDb() };
+  env.DB.exec(`INSERT INTO subscriptions(id, customer_id, status, period_end, license_key, install_id, event_at, plan)
+               VALUES ('s1', 'c1', 'active', 2000000000, 'DM-ABCD-EFGH-JKLM', 'buyer', '', 'monthly')`);
+  env.DB.exec(`INSERT INTO activations VALUES ('DM-ABCD-EFGH-JKLM', 'buyer', 0), ('DM-ABCD-EFGH-JKLM', 'laptop', 0)`);
+  const post = (path: string, body: unknown) =>
+    handleLicense(new Request(`https://deskmonk.app${path}`, { method: "POST", body: JSON.stringify(body) }), env as any, path);
+  expect((await post("/api/license/deactivate", { key: "dm-abcd-efgh-jklm", install_id: "buyer" }))!.status).toBe(200);
+  const left = (await env.DB.prepare("SELECT install_id FROM activations").all()).results.map((r: any) => r.install_id);
+  expect(left).toEqual(["laptop"]);
+  // The buying computer's next start (no key, only its id) must not take the place back.
+  expect(await (await post("/api/license/validate", { key: "", install_id: "buyer" }))!.json()).toEqual({ key: "", pro_until: 0 });
+  expect((await post("/api/license/deactivate", { key: "", install_id: "buyer" }))!.status).toBe(404);
+});
+
+test("refund: the last completed payment in full, then cancel at once", async () => {
+  const calls: { method: string; url: string; body: any }[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ method: init.method ?? "GET", url, body: init.body ? JSON.parse(String(init.body)) : undefined });
+    if (url.includes("/transactions?")) {
+      return Response.json({ data: [{ id: "txn_2", currency_code: "USD", details: { totals: { grand_total: "250" } } }] });
+    }
+    if (url.endsWith("/adjustments")) return Response.json({ data: { status: "pending_approval" } }, { status: 201 });
+    return Response.json({ data: {} });
+  }) as typeof fetch;
+  try {
+    const env = { DB: memoryDb(), PADDLE_ENV: "production", PADDLE_API_KEY: "test" } as any;
+    const r = await refundLast(env, "sub_1", "asked by email");
+    expect(r).toEqual({ ok: "Refund of txn_2 (2.50 USD) sent to Paddle (status: pending_approval). Subscription canceled; no more charges." });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET https://api.paddle.com/transactions?subscription_id=sub_1&status=completed&order_by=billed_at[DESC]&per_page=1",
+      "POST https://api.paddle.com/adjustments",
+      "POST https://api.paddle.com/subscriptions/sub_1/cancel",
+    ]);
+    expect(calls[1].body).toEqual({ action: "refund", type: "full", transaction_id: "txn_2", reason: "asked by email" });
+    expect(calls[2].body).toEqual({ effective_from: "immediately" });
+    expect(await refundLast({ ...env, PADDLE_API_KEY: undefined }, "sub_1", "x")).toEqual({ error: "PADDLE_API_KEY is not set." });
+  } finally {
+    globalThis.fetch = real;
+  }
 });

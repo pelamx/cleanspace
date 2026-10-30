@@ -9,6 +9,7 @@ use deskmonk::hardware::{self, Component};
 use deskmonk::scan::{Category, Item, Phase, human_size};
 use deskmonk::telemetry::{self, Telemetry};
 use deskmonk::plan::{self, Plan};
+use deskmonk::update;
 use deskmonk::vault;
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, RichText, Sense, Stroke,
@@ -80,6 +81,26 @@ fn main() -> eframe::Result {
             setup_style(&cc.egui_ctx);
             let mut app = App::default();
             app.telemetry.started("gui");
+            let (tx, rx) = channel();
+            let ctx = cc.egui_ctx.clone();
+            // At start and every 12 hours, for copies that stay open for days: finds, downloads and installs a new version.
+            std::thread::spawn(move || {
+                // On Windows the copy this one replaced may still be closing; its old file can only go once it has.
+                std::thread::sleep(Duration::from_secs(if cfg!(windows) { 10 } else { 0 }));
+                update::tidy();
+                loop {
+                    if let Some(found) = update::check(true) {
+                        let installed = matches!(found, update::Found::Installed(_));
+                        if tx.send(found).is_err() || installed {
+                            break;
+                        }
+                        ctx.request_repaint();
+                    }
+                    std::thread::sleep(Duration::from_secs(12 * 3600));
+                }
+                ctx.request_repaint();
+            });
+            app.update_check = Some(rx);
             app.detect_hardware(cc.egui_ctx.clone());
             #[cfg(target_os = "macos")]
             if deskmonk::sandboxed() {
@@ -236,6 +257,7 @@ enum Page {
     Map,
     Lock,
     Vault,
+    License,
 }
 
 enum Row {
@@ -317,6 +339,17 @@ struct App {
     /// App Store build: localized prices (monthly, yearly) and whether a purchase sheet is open.
     store_prices: (Option<String>, Option<String>),
     store_busy: bool,
+    /// A newer version on the website, found at startup; shown as an update button in the top bar.
+    update_check: Option<Receiver<update::Found>>,
+    new_version: Option<update::Found>,
+    /// The update whose pop-up was answered (Restart/Download or Later); the top bar button stays.
+    update_seen: Option<update::Found>,
+    /// Contact form: open, typed email and message, the running send, and its outcome (Ok = sent).
+    contact_open: bool,
+    contact_email: String,
+    contact_message: String,
+    contact_send: Option<Receiver<Result<(), String>>>,
+    contact_result: Option<Result<(), String>>,
 }
 
 impl Default for App {
@@ -376,6 +409,14 @@ impl Default for App {
             pro_checked: -1.0,
             store_prices: (None, None),
             store_busy: false,
+            update_check: None,
+            new_version: None,
+            update_seen: None,
+            contact_open: false,
+            contact_email: String::new(),
+            contact_message: String::new(),
+            contact_send: None,
+            contact_result: None,
         }
     }
 }
@@ -1147,143 +1188,9 @@ impl App {
     }
 
     fn pro_dialog(&mut self, ctx: &egui::Context) {
-        let (_, _, _, muted) = palette(ctx.global_style().visuals.dark_mode);
-        let gold = Color32::from_rgb(245, 184, 46);
-        let pro = self.plan.is_pro();
-        let (clean_left, vaults_left) = (self.plan.clean_left(), self.plan.vaults_left());
         let modal = egui::Modal::new(egui::Id::new("pro")).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(Margin::same(26))).show(ctx, |ui| {
             ui.set_width(400.0);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("⭐").size(40.0).color(gold));
-                ui.label(RichText::new("deskMonk Pro").size(22.0).strong());
-                let sub = if pro && self.plan.pro_until > 0 {
-                    tf!("Pro etkin · {} tarihine kadar", "Pro is active · until {}", "Pro activo · hasta {}", plan::date(self.plan.pro_until))
-                } else if pro {
-                    t("Pro etkin", "Pro is active", "Pro activo").into()
-                } else {
-                    t("Sınırları kaldırın, deskMonk'u destekleyin.", "Remove the limits and support deskMonk.", "Quite los límites y apoye a deskMonk.").into()
-                };
-                ui.label(RichText::new(sub).color(muted));
-            });
-            ui.add_space(14.0);
-            let rows = [
-                (
-                    "🗑",
-                    match clean_left {
-                        Some(left) => tf!("Temizlik: bugün {} kaldı (günde 2 GB)", "Cleaning: {} left today (2 GB a day)", "Limpieza: quedan {} hoy (2 GB al día)", human_size(left)),
-                        None => t("Temizlik", "Cleaning", "Limpieza").into(),
-                    },
-                    t("sınırsız", "unlimited", "ilimitada"),
-                ),
-                (
-                    "🔑",
-                    match vaults_left {
-                        Some(left) => tf!("Kasa: bugün {left}/3 şifreleme, en fazla 200 MB", "Vault: {left}/3 encryptions left today, up to 200 MB", "Caja fuerte: {left}/3 cifrados hoy, hasta 200 MB"),
-                        None => t("Kasa", "Vault", "Caja fuerte").into(),
-                    },
-                    t("sınırsız, her boyut", "unlimited, any size", "ilimitada, cualquier tamaño"),
-                ),
-                (
-                    "🔒",
-                    if pro { t("Uygulama kilidi", "App lock", "Bloqueo de apps") } else { t("Uygulama kilidi: 1 uygulama", "App lock: 1 app", "Bloqueo de apps: 1 app") }.into(),
-                    t("istediğiniz kadar", "as many as you like", "todas las que quiera"),
-                ),
-            ];
-            let shown = if APPSTORE { &rows[..2] } else { &rows[..] };
-            for (icon, free, with_pro) in shown.iter().cloned() {
-                card(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon).size(18.0));
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(free).color(if pro { ui.visuals().text_color() } else { muted }));
-                            ui.label(RichText::new(tf!("Pro: {with_pro}", "Pro: {with_pro}", "Pro: {with_pro}")).strong().color(gold));
-                        });
-                    });
-                });
-                ui.add_space(6.0);
-            }
-            ui.add_space(8.0);
-            if pro {
-                if APPSTORE {
-                    if wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
-                        open_url("https://apps.apple.com/account/subscriptions");
-                    }
-                } else if !self.plan.key.is_empty() && wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
-                    let key = self.plan.key.clone();
-                    // shortcut: a failed portal request is only logged; the app shows nothing.
-                    std::thread::spawn(move || match plan::portal_url(&key) {
-                        Ok(url) => open_url(&url),
-                        Err(e) => eprintln!("portal: {e}"),
-                    });
-                }
-            } else {
-                ui.columns(2, |cols| {
-                    for (col, yearly) in cols.iter_mut().zip([false, true]) {
-                        // The App Store shows its own localized price; the website build shows the Paddle price.
-                        let (store_m, store_y) = (self.store_prices.0.as_deref().unwrap_or("…"), self.store_prices.1.as_deref().unwrap_or("…"));
-                        let label = if yearly {
-                            tf!("{} / yıl", "{} / year", "{} / año", if APPSTORE { store_y } else { plan::PRICE_YEARLY })
-                        } else {
-                            tf!("{} / ay", "{} / month", "{} / mes", if APPSTORE { store_m } else { plan::PRICE_MONTHLY })
-                        };
-                        let button = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(10);
-                        if col.add_enabled(!self.store_busy, button.min_size(vec2(col.available_width(), 42.0))).clicked() {
-                            self.pro_error.clear();
-                            if APPSTORE {
-                                self.store_busy = true;
-                                store_buy(yearly);
-                            } else if let Some(url) = plan::buy_url(&self.telemetry.install_id, yearly) {
-                                open_url(&url);
-                                self.pro_waiting = Some(ctx.input(|i| i.time));
-                            }
-                        }
-                        col.vertical_centered(|ui| {
-                            let note = t("istediğiniz zaman iptal", "cancel anytime", "cancele cuando quiera");
-                            ui.label(RichText::new(note).small().color(muted));
-                        });
-                    }
-                });
-                if self.store_busy {
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new());
-                        ui.label(RichText::new(t("App Store bekleniyor…", "Waiting for the App Store…", "Esperando al App Store…")).color(muted));
-                    });
-                }
-                if self.pro_waiting.is_some() {
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new());
-                        ui.label(RichText::new(t(
-                            "Ödeme bekleniyor… tamamlanınca Pro kendiliğinden açılır.",
-                            "Waiting for the payment… Pro turns on by itself when it is done.",
-                            "Esperando el pago… Pro se activa solo cuando termine.",
-                        )).color(muted));
-                    });
-                }
-                ui.add_space(12.0);
-                if APPSTORE {
-                    self.store_terms(ui, muted);
-                } else {
-                ui.label(RichText::new(t("Lisans anahtarınız var mı?", "Have a license key?", "¿Tiene una clave de licencia?")).strong());
-                ui.horizontal(|ui| {
-                    let busy = self.pro_check.is_some() && self.pro_manual;
-                    let field = ui.add(egui::TextEdit::singleline(&mut self.pro_key).hint_text("DM-XXXX-XXXX-XXXX").desired_width(250.0));
-                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (ui.add_enabled(!busy, egui::Button::new(t("Etkinleştir", "Activate", "Activar"))).clicked() || enter) && !self.pro_key.trim().is_empty() {
-                        self.pro_error.clear();
-                        self.check_license(ctx, self.pro_key.trim().to_string(), true);
-                    }
-                    if busy {
-                        ui.add(egui::Spinner::new());
-                    }
-                });
-                }
-                if !self.pro_error.is_empty() {
-                    ui.label(RichText::new(&self.pro_error).color(DANGER));
-                }
-            }
+            self.pro_body(ui);
             ui.add_space(6.0);
             if wide_button(ui, t("Kapat", "Close", "Cerrar"), None) {
                 ui.close();
@@ -1292,6 +1199,317 @@ impl App {
         if modal.should_close() {
             self.pro_open = false;
             self.pro_error.clear();
+        }
+    }
+
+    /// The License page, opened from the top bar: activation with a key, plan, limits and buying.
+    fn license_view(&mut self, ui: &mut Ui) {
+        centered_column(ui, 460.0, |ui| {
+            ui.add_space(10.0);
+            self.pro_body(ui);
+        });
+    }
+
+    /// Plan, limits, buying, and the license key (enter, copy, manage, remove): shared by the Pro window and the License page.
+    fn pro_body(&mut self, ui: &mut Ui) {
+        let (_, _, _, muted) = palette(ui.visuals().dark_mode);
+        let gold = Color32::from_rgb(245, 184, 46);
+        let pro = self.plan.is_pro();
+        let (clean_left, vaults_left) = (self.plan.clean_left(), self.plan.vaults_left());
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("⭐").size(40.0).color(gold));
+            ui.label(RichText::new("deskMonk Pro").size(22.0).strong());
+            let sub = if pro && self.plan.pro_until > 0 {
+                tf!("Pro etkin · {} tarihine kadar", "Pro is active · until {}", "Pro activo · hasta {}", plan::date(self.plan.pro_until))
+            } else if pro {
+                t("Pro etkin", "Pro is active", "Pro activo").into()
+            } else {
+                t("Sınırları kaldırın, deskMonk'u destekleyin.", "Remove the limits and support deskMonk.", "Quite los límites y apoye a deskMonk.").into()
+            };
+            ui.label(RichText::new(sub).color(muted));
+        });
+        ui.add_space(14.0);
+        if !pro && !APPSTORE {
+            self.activation_card(ui, muted);
+        }
+        let rows = [
+            (
+                "🗑",
+                match clean_left {
+                    Some(left) => tf!("Temizlik: bugün {} kaldı (günde 2 GB)", "Cleaning: {} left today (2 GB a day)", "Limpieza: quedan {} hoy (2 GB al día)", human_size(left)),
+                    None => t("Temizlik", "Cleaning", "Limpieza").into(),
+                },
+                t("sınırsız", "unlimited", "ilimitada"),
+            ),
+            (
+                "🔑",
+                match vaults_left {
+                    Some(left) => tf!("Kasa: bugün {left}/3 şifreleme, en fazla 200 MB", "Vault: {left}/3 encryptions left today, up to 200 MB", "Caja fuerte: {left}/3 cifrados hoy, hasta 200 MB"),
+                    None => t("Kasa", "Vault", "Caja fuerte").into(),
+                },
+                t("sınırsız, her boyut", "unlimited, any size", "ilimitada, cualquier tamaño"),
+            ),
+            (
+                "🔒",
+                if pro { t("Uygulama kilidi", "App lock", "Bloqueo de apps") } else { t("Uygulama kilidi: 1 uygulama", "App lock: 1 app", "Bloqueo de apps: 1 app") }.into(),
+                t("istediğiniz kadar", "as many as you like", "todas las que quiera"),
+            ),
+        ];
+        let shown = if APPSTORE { &rows[..2] } else { &rows[..] };
+        for (icon, free, with_pro) in shown.iter().cloned() {
+            card(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(icon).size(18.0));
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(free).color(if pro { ui.visuals().text_color() } else { muted }));
+                        ui.label(RichText::new(tf!("Pro: {with_pro}", "Pro: {with_pro}", "Pro: {with_pro}")).strong().color(gold));
+                    });
+                });
+            });
+            ui.add_space(6.0);
+        }
+        ui.add_space(8.0);
+        if pro {
+            if APPSTORE {
+                if wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
+                    open_url("https://apps.apple.com/account/subscriptions");
+                }
+            } else if !self.plan.key.is_empty() {
+                // The key turns Pro on on up to 3 computers, so it is shown here to copy.
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(t("Lisans anahtarınız:", "Your license key:", "Su clave de licencia:")).color(muted));
+                    ui.label(RichText::new(&self.plan.key).monospace().strong());
+                    if ui.small_button(t("Kopyala", "Copy", "Copiar")).clicked() {
+                        ui.ctx().copy_text(self.plan.key.clone());
+                    }
+                });
+                ui.add_space(6.0);
+            }
+            if !APPSTORE && !self.plan.key.is_empty() && wide_button(ui, t("Aboneliği yönet", "Manage subscription", "Gestionar suscripción"), Some(ACCENT)) {
+                let key = self.plan.key.clone();
+                // shortcut: a failed portal request is only logged; the app shows nothing.
+                std::thread::spawn(move || match plan::portal_url(&key) {
+                    Ok(url) => open_url(&url),
+                    Err(e) => eprintln!("portal: {e}"),
+                });
+            }
+            // Like bubbleTranslate: frees one of the key's 3 computers for another one.
+            if !APPSTORE && !self.plan.key.is_empty() {
+                let remove = ui.add_sized([ui.available_width(), 32.0], egui::Button::new(t("Bu bilgisayardan kaldır", "Remove from this computer", "Quitar de este ordenador")).frame(false));
+                if remove.on_hover_text(t(
+                    "Anahtarın 3 bilgisayarlık yerinden birini boşaltır; bu bilgisayar Ücretsiz plana döner.",
+                    "Frees one of the key's 3 computers; this computer goes back to the Free plan.",
+                    "Libera uno de los 3 ordenadores de la clave; este vuelve al plan gratuito.",
+                )).clicked() {
+                    match plan::deactivate(&self.plan.key, &self.telemetry.install_id) {
+                        Ok(()) => self.plan.set_license(String::new(), 0),
+                        Err(e) => self.pro_error = e,
+                    }
+                }
+            }
+            if !self.pro_error.is_empty() {
+                ui.label(RichText::new(&self.pro_error).color(DANGER));
+            }
+        } else {
+            ui.columns(2, |cols| {
+                for (col, yearly) in cols.iter_mut().zip([false, true]) {
+                    // The App Store shows its own localized price; the website build shows the Paddle price.
+                    let (store_m, store_y) = (self.store_prices.0.as_deref().unwrap_or("…"), self.store_prices.1.as_deref().unwrap_or("…"));
+                    let label = if yearly {
+                        tf!("{} / yıl", "{} / year", "{} / año", if APPSTORE { store_y } else { plan::PRICE_YEARLY })
+                    } else {
+                        tf!("{} / ay", "{} / month", "{} / mes", if APPSTORE { store_m } else { plan::PRICE_MONTHLY })
+                    };
+                    let button = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(10);
+                    if col.add_enabled(!self.store_busy, button.min_size(vec2(col.available_width(), 42.0))).clicked() {
+                        self.pro_error.clear();
+                        if APPSTORE {
+                            self.store_busy = true;
+                            store_buy(yearly);
+                        } else if let Some(url) = plan::buy_url(&self.telemetry.install_id, yearly) {
+                            open_url(&url);
+                            self.pro_waiting = Some(col.input(|i| i.time));
+                        }
+                    }
+                    col.vertical_centered(|ui| {
+                        let note = t("istediğiniz zaman iptal", "cancel anytime", "cancele cuando quiera");
+                        ui.label(RichText::new(note).small().color(muted));
+                    });
+                }
+            });
+            if self.store_busy {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new());
+                    ui.label(RichText::new(t("App Store bekleniyor…", "Waiting for the App Store…", "Esperando al App Store…")).color(muted));
+                });
+            }
+            if self.pro_waiting.is_some() {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new());
+                    ui.label(RichText::new(t(
+                        "Ödeme bekleniyor… tamamlanınca Pro kendiliğinden açılır.",
+                        "Waiting for the payment… Pro turns on by itself when it is done.",
+                        "Esperando el pago… Pro se activa solo cuando termine.",
+                    )).color(muted));
+                });
+            }
+            if APPSTORE {
+                ui.add_space(12.0);
+                self.store_terms(ui, muted);
+                if !self.pro_error.is_empty() {
+                    ui.label(RichText::new(&self.pro_error).color(DANGER));
+                }
+            }
+        }
+    }
+
+    /// Where a bought key is entered: first thing on the License page and in the Pro window (not in the App Store build).
+    fn activation_card(&mut self, ui: &mut Ui, muted: Color32) {
+        card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(t("🔑 Lisans anahtarı ile etkinleştir", "🔑 Activate with a license key", "🔑 Activar con una clave de licencia")).size(16.0).strong());
+            ui.label(RichText::new(t(
+                "Ödemeden sonra anahtar, ödeme sayfasında ve e-postanızda (DM-…) gelir. Buraya yapıştırın.",
+                "After paying, your key (DM-…) is on the payment page and in your email. Paste it here.",
+                "Tras el pago, su clave (DM-…) aparece en la página de pago y en su correo. Péguela aquí.",
+            )).color(muted));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let busy = self.pro_check.is_some() && self.pro_manual;
+                let field = ui.add(egui::TextEdit::singleline(&mut self.pro_key).hint_text("DM-XXXX-XXXX-XXXX").desired_width(ui.available_width() - 110.0));
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let activate = egui::Button::new(RichText::new(t("Etkinleştir", "Activate", "Activar")).strong().color(Color32::WHITE)).fill(ACCENT);
+                if (ui.add_enabled(!busy, activate).clicked() || enter) && !self.pro_key.trim().is_empty() {
+                    self.pro_error.clear();
+                    self.check_license(&ui.ctx().clone(), self.pro_key.trim().to_string(), true);
+                }
+                if busy {
+                    ui.add(egui::Spinner::new());
+                }
+            });
+            if !self.pro_error.is_empty() {
+                ui.label(RichText::new(&self.pro_error).color(DANGER));
+            }
+        });
+        ui.add_space(10.0);
+    }
+
+    /// Cleaning or a vault job is running: no restart for an update now.
+    fn busy(&self) -> bool {
+        self.deleting.is_some() || self.vault_job.is_some()
+    }
+
+    /// Asks once per update to restart into it (or, where it couldn't install itself, to download it); "Later" leaves
+    /// only the top bar button, and an installed update opens at the next start anyway.
+    fn update_dialog(&mut self, ctx: &egui::Context) {
+        let (Some(found), Some(site)) = (self.new_version.clone(), plan::URL) else { return };
+        let (_, _, _, muted) = palette(ctx.global_style().visuals.dark_mode);
+        let (installed, v) = match &found {
+            update::Found::Installed(v) => (true, v.clone()),
+            update::Found::Available(v) => (false, v.clone()),
+        };
+        let busy = self.busy();
+        let modal = egui::Modal::new(egui::Id::new("update")).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(Margin::same(26))).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("⬆").size(36.0).color(Color32::from_rgb(34, 160, 90)));
+                if installed {
+                    ui.label(RichText::new(tf!("deskMonk {v} kuruldu", "deskMonk {v} is installed", "deskMonk {v} está instalado")).size(20.0).strong());
+                    ui.label(RichText::new(tf!(
+                        "Yeni sürüm hazır. Şimdi yeniden başlatın ya da bir sonraki açılışta kendiliğinden gelsin. Ayarlarınız ve lisansınız korunur.",
+                        "The new version is ready. Restart now, or it opens by itself next time. Your settings and license stay.",
+                        "La nueva versión está lista. Reinicie ahora o se abrirá sola la próxima vez. Sus ajustes y su licencia se conservan.",
+                    )).color(muted));
+                } else {
+                    ui.label(RichText::new(tf!("deskMonk {v} çıktı", "deskMonk {v} is available", "Ya está disponible deskMonk {v}")).size(20.0).strong());
+                    ui.label(RichText::new(tf!(
+                        "Sizdeki sürüm {}. Yeni sürümü indirip kurun; ayarlarınız ve lisansınız korunur.",
+                        "You have {}. Download and install the new version; your settings and license stay.",
+                        "Tiene la {}. Descargue e instale la nueva versión; sus ajustes y su licencia se conservan.",
+                        env!("CARGO_PKG_VERSION")
+                    )).color(muted));
+                }
+            });
+            ui.add_space(14.0);
+            if installed {
+                if busy {
+                    ui.label(RichText::new(t("Önce süren işlem bitsin.", "Let the running job finish first.", "Deje que termine la tarea en curso.")).color(muted));
+                }
+                if ui.add_enabled_ui(!busy, |ui| wide_button(ui, t("Şimdi yeniden başlat", "Restart now", "Reiniciar ahora"), Some(Color32::from_rgb(34, 160, 90)))).inner {
+                    update::restart();
+                }
+            } else if wide_button(ui, t("İndir", "Download", "Descargar"), Some(Color32::from_rgb(34, 160, 90))) {
+                open_url(&format!("{site}/#download"));
+                ui.close();
+            }
+            if wide_button(ui, t("Daha sonra", "Later", "Más tarde"), None) {
+                ui.close();
+            }
+        });
+        if modal.should_close() {
+            self.update_seen = Some(found);
+        }
+    }
+
+    /// "Contact us": a message to the developer, mailed by deskmonk.app (worker/src/mail.ts).
+    fn contact_dialog(&mut self, ctx: &egui::Context) {
+        let (_, _, _, muted) = palette(ctx.global_style().visuals.dark_mode);
+        if let Some(result) = self.contact_send.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.contact_send = None;
+            if result.is_ok() {
+                self.contact_message.clear();
+            }
+            self.contact_result = Some(result);
+        }
+        let modal = egui::Modal::new(egui::Id::new("contact")).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(Margin::same(26))).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(RichText::new(t("Bize yazın", "Contact us", "Escríbanos")).size(20.0).strong());
+            ui.label(RichText::new(t(
+                "Soru, hata veya öneri: mesajınız doğrudan geliştiriciye gider.",
+                "A question, a bug or an idea: your message goes straight to the developer.",
+                "Una pregunta, un error o una idea: su mensaje llega directamente al desarrollador.",
+            )).color(muted));
+            ui.add_space(12.0);
+            ui.label(t("E-postanız (yanıt için, isteğe bağlı)", "Your email (for a reply, optional)", "Su correo (para responderle, opcional)"));
+            ui.add(egui::TextEdit::singleline(&mut self.contact_email).hint_text("you@example.com").desired_width(f32::INFINITY));
+            ui.add_space(8.0);
+            ui.label(t("Mesajınız", "Your message", "Su mensaje"));
+            ui.add(egui::TextEdit::multiline(&mut self.contact_message).desired_rows(6).desired_width(f32::INFINITY).char_limit(5000));
+            ui.add_space(10.0);
+            let busy = self.contact_send.is_some();
+            match &self.contact_result {
+                Some(Ok(())) => {
+                    ui.label(RichText::new(t("Gönderildi, teşekkürler!", "Sent, thank you!", "¡Enviado, gracias!")).color(Color32::from_rgb(34, 160, 90)));
+                }
+                Some(Err(e)) => {
+                    ui.label(RichText::new(e).color(DANGER));
+                }
+                None => {}
+            }
+            if busy {
+                ui.add(egui::Spinner::new());
+            }
+            let ready = !busy && !self.contact_message.trim().is_empty();
+            if ui.add_enabled_ui(ready, |ui| wide_button(ui, t("Gönder", "Send", "Enviar"), Some(ACCENT))).inner {
+                let (tx, rx) = channel();
+                let (email, message, id, ctx) = (self.contact_email.trim().to_string(), self.contact_message.trim().to_string(), self.telemetry.install_id.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(plan::contact(&email, &message, &id));
+                    ctx.request_repaint();
+                });
+                self.contact_send = Some(rx);
+                self.contact_result = None;
+            }
+            if wide_button(ui, t("Kapat", "Close", "Cerrar"), None) {
+                ui.close();
+            }
+        });
+        if modal.should_close() {
+            self.contact_open = false;
+            self.contact_result = None;
         }
     }
 
@@ -2265,8 +2483,53 @@ impl eframe::App for App {
                         } else {
                             egui::Button::new(RichText::new(t("⭐ Pro'ya geç", "⭐ Get Pro", "⭐ Pasar a Pro")).strong().color(Color32::WHITE)).fill(ACCENT).corner_radius(8)
                         };
+                        // Get Pro opens the payment page on the website; the app shows its License page, where the key is
+                        // entered (and where Pro turns on by itself when the payment was made from this computer).
                         if ui.add(pro_button).clicked() {
-                            self.open_pro("button");
+                            self.page = Page::License;
+                            self.telemetry.used("gui", "pro", "button");
+                            if !self.plan.is_pro() && !APPSTORE && let Some(url) = plan::buy_url(&self.telemetry.install_id, false) {
+                                open_url(&url);
+                                self.pro_waiting = Some(ctx.input(|i| i.time));
+                            }
+                        }
+                        if !self.plan.is_pro() && !APPSTORE && plan::URL.is_some() {
+                            let activate = egui::Button::new(RichText::new(t("🔑 Etkinleştir", "🔑 Activate", "🔑 Activar")).strong()).corner_radius(8);
+                            if ui.add(activate).on_hover_text(t("Lisans anahtarını girin", "Enter your license key", "Introduzca su clave de licencia")).clicked() {
+                                self.page = Page::License;
+                            }
+                        }
+                        let contact = ui.add(egui::Button::new(RichText::new("✉").size(16.0)).frame(false));
+                        if contact.on_hover_text(t("Bize yazın", "Contact us", "Escríbanos")).clicked() {
+                            // Builds without the server (dev, Mac App Store) write a normal email instead.
+                            if plan::URL.is_some() {
+                                self.contact_open = true;
+                            } else {
+                                open_url("mailto:support@deskmonk.app");
+                            }
+                        }
+                        if let Some(v) = self.update_check.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                            self.new_version = Some(v);
+                        }
+                        if let (Some(found), Some(site)) = (self.new_version.clone(), plan::URL) {
+                            ui.add_space(6.0);
+                            let (label, hint) = match &found {
+                                update::Found::Installed(v) => (
+                                    tf!("⟳ {v} için yeniden başlat", "⟳ Restart for {v}", "⟳ Reiniciar para {v}"),
+                                    t("Yeni sürüm kuruldu; yeniden başlatınca açılır", "The new version is installed; it opens after a restart", "La nueva versión está instalada; se abre al reiniciar"),
+                                ),
+                                update::Found::Available(v) => (
+                                    tf!("⬆ Güncelle: {v}", "⬆ Update to {v}", "⬆ Actualizar a {v}"),
+                                    t("Yeni sürümü indir", "Download the new version", "Descargar la nueva versión"),
+                                ),
+                            };
+                            let button = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE)).fill(Color32::from_rgb(34, 160, 90)).corner_radius(8);
+                            if ui.add_enabled(!self.busy(), button).on_hover_text(hint).clicked() {
+                                match found {
+                                    update::Found::Installed(_) => update::restart(),
+                                    update::Found::Available(_) => open_url(&format!("{site}/#download")),
+                                }
+                            }
                         }
                         ui.add_space(8.0);
                         ui.label(
@@ -2310,6 +2573,9 @@ impl eframe::App for App {
                     Page::Lock => {
                         egui::ScrollArea::vertical().id_salt("lock_page").auto_shrink(false).show(ui, |ui| self.lock_view(ui));
                     }
+                    Page::License => {
+                        egui::ScrollArea::vertical().id_salt("license_page").auto_shrink(false).show(ui, |ui| self.license_view(ui));
+                    }
                     Page::Clean => {
                         self.header(ui, &ctx);
                         ui.add_space(18.0);
@@ -2320,6 +2586,12 @@ impl eframe::App for App {
 
         if self.pro_open {
             self.pro_dialog(&ctx);
+        }
+        if self.contact_open {
+            self.contact_dialog(&ctx);
+        }
+        if self.new_version.is_some() && self.new_version != self.update_seen && !self.pro_open {
+            self.update_dialog(&ctx);
         }
         if self.vault_prompt {
             self.vault_unlock_dialog(&ctx);

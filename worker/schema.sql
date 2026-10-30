@@ -24,3 +24,7 @@ CREATE TABLE IF NOT EXISTS activations(license_key TEXT NOT NULL, install_id TEX
 CREATE TABLE IF NOT EXISTS ignored_installs(install_id TEXT PRIMARY KEY, ts INTEGER NOT NULL);
 -- What was done in /admin, newest first in the panel.
 CREATE TABLE IF NOT EXISTS admin_log(id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, action TEXT NOT NULL, ref TEXT, detail TEXT NOT NULL);
+-- Messages sent from the app's contact form (also mailed to OWNER_EMAIL when mail is set up).
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, install_id TEXT NOT NULL, email TEXT, message TEXT NOT NULL,
+    version TEXT NOT NULL, os TEXT NOT NULL, country TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);

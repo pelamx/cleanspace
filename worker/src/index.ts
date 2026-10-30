@@ -7,6 +7,7 @@
 
 import { handleAdmin } from "./admin";
 import { handleLicense, type LicenseEnv } from "./license";
+import { handleMail, weekly } from "./mail";
 import { handleSite } from "./site";
 
 export interface Env extends LicenseEnv {
@@ -45,8 +46,14 @@ export default {
 
     const license = await handleLicense(req, env, path);
     if (license !== null) return license;
+    const mail = await handleMail(req, env, path);
+    if (mail !== null) return mail;
 
     return (await handleAdmin(req, env, path)) ?? new Response(null, { status: 404 });
+  },
+
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    await weekly(env);
   },
 } satisfies ExportedHandler<Env>;
 

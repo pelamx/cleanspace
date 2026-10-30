@@ -18,11 +18,22 @@ binding = "DB"
 database_name = "deskmonk"
 database_id = "e0bfa82a-e5c0-4b68-ade8-4c5fad7b1af2"
 
+# Monday 08:00 UTC: the weekly summary mail (src/mail.ts).
+[triggers]
+crons = ["0 8 * * 1"]
+
 # Secret, not here: ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN), the /admin password for user "admin".
 
-# deskMonk Pro (Paddle, the live bubbleTranslate account; product pro_01m655e6q98g48am0eqdqfgre3).
+# deskMonk Pro (Paddle). Still the live bubbleTranslate account (product pro_01m655e6q98g48am0eqdqfgre3), whose keys are set.
+# Moving to deskMonk's own live account (product pro_01m667pf8797d2s0z3pt3wn771): once its 3 keys are set, change the prices
+# to pri_01m667qxxgttbk4k2sdmaa6y5m (monthly) and pri_01m667xnt44c9x72k87xm77fy7 (yearly). Keys and prices must be from one account.
 # Secrets, not here: PADDLE_CLIENT_TOKEN, PADDLE_API_KEY, PADDLE_WEBHOOK_SECRET (wrangler secret put …).
 [vars]
 PADDLE_ENV = "production"
 PADDLE_PRICE_MONTHLY = "pri_01m655mbyt5f86ptdtqpsggdza"
 PADDLE_PRICE_YEARLY = "pri_01m655nmwqf9t6zj9bakdepxb8"
+
+# Mail through Resend (src/mail.ts): the buyer's license key, the app's contact form, the weekly summary.
+# deskmonk.app must be verified in Resend. Secret, not here: RESEND_API_KEY. Without it nothing is mailed.
+MAIL_FROM = "deskMonk <support@deskmonk.app>"
+OWNER_EMAIL = "pelamx@deskmonk.app"

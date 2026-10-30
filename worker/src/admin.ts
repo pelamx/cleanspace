@@ -5,11 +5,11 @@
 //! POST /admin/mine            mark an installation as the operator's own (left out of every count)
 //! POST /admin/issue           a Pro license nobody paid for (press, support, testers)
 //! POST /admin/{extend,devices,rotate,end,delete}   manage one subscription
-//! Money moves only in Paddle (refunds, cancellations); here the license side is changed.
+//! POST /admin/refund          refund a Paddle subscription's last payment in full, cancel it, end Pro (money moves in Paddle)
 
 import type { Env } from "./index";
 import { USD } from "./i18n";
-import { MAX_DEVICES, newKey } from "./license";
+import { MAX_DEVICES, newKey, refundLast } from "./license";
 import { COUNTRY_POINTS, LAND_ROWS, MAP_NORTH, MAP_STEP } from "./world";
 
 const DAY = 86400;
@@ -51,7 +51,7 @@ export async function handleAdmin(req: Request, env: Env, path: string): Promise
   const action = path.slice("/admin/".length);
   if (action === "mine") return mine(env.DB, form);
   if (action === "issue") return issue(env, form);
-  if (["extend", "devices", "rotate", "end", "delete"].includes(action)) return manage(env, form, action);
+  if (["extend", "devices", "rotate", "end", "delete", "refund"].includes(action)) return manage(env, form, action);
   return new Response("Not found", { status: 404 });
 }
 
@@ -150,6 +150,19 @@ async function manage(env: Env, form: FormData, action: string): Promise<Respons
       ]);
       await audit(db, "new key", id, "old key disabled");
       message = `New key ${key}. The old key no longer works; each computer has to enter the new one.`;
+      break;
+    }
+    case "refund": {
+      if (!paddle) return html(await dashboard(env, id, { error: "Issued by hand: nothing was paid, so there is nothing to refund. Use End now." }));
+      const reason = String(form.get("reason") ?? "").trim().slice(0, 200) || "Refund requested by the customer";
+      const result = await refundLast(env, id, reason);
+      if ("error" in result) {
+        await audit(db, "refund failed", id, result.error);
+        return html(await dashboard(env, id, { error: result.error }));
+      }
+      await db.prepare("UPDATE subscriptions SET status = 'canceled', period_end = ?1 WHERE id = ?2").bind(now(), id).run();
+      await audit(db, "refund", id, `${result.ok} Reason: ${reason}`);
+      message = `${result.ok} Pro ended for this key.`;
       break;
     }
     case "end": {
@@ -532,7 +545,7 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
       </form>
       ${subGroup("Paddle", "paddle", matches.filter((s) => s.customer_id !== "manual"), t, !!query)}
       ${subGroup("Issued by hand", "manual", matches.filter((s) => s.customer_id === "manual"), t, !!query)}
-      <p class="muted foot">Refunds and cancellations are done in Paddle; its webhook updates this list. App Store subscriptions are Apple's and
+      <p class="muted foot">Refund (under Manage) gives back a subscription's last payment and cancels it; Paddle's webhook updates this list. App Store subscriptions are Apple's and
         appear only in the counts above (Pro installs on the App Store version).</p>
     </div>
   </details>
@@ -617,6 +630,7 @@ function actions(s: Row): string {
     <form method="post" action="/admin/extend" class="inline">${id}<input type="number" name="days" min="1" max="3650" value="30" aria-label="Days"><button>Extend days</button></form>
     <form method="post" action="/admin/devices" class="inline" ${confirm("Free all device slots of this key?")}>${id}<button class="quiet">Free devices</button></form>
     <form method="post" action="/admin/rotate" class="inline" ${confirm("Make a new key? The old key stops working on every computer.")}>${id}<button class="quiet">New key</button></form>
+    ${s.customer_id !== "manual" ? `<form method="post" action="/admin/refund" class="inline" ${confirm("Refund the last payment in full, cancel the subscription and end Pro now? The money goes back to the buyer.")}>${id}<input type="text" name="reason" maxlength="200" placeholder="Reason (for Paddle)" aria-label="Refund reason"><button class="danger">Refund</button></form>` : ""}
     <form method="post" action="/admin/end" class="inline" ${confirm("End Pro now for this subscription?")}>${id}<button class="quiet">End now</button></form>
     <form method="post" action="/admin/delete" class="inline" ${confirm("Delete this subscription and its key for good?")}>${id}<button class="danger">Delete</button></form>
   </div>`;

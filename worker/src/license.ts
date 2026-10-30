@@ -6,8 +6,9 @@
 //! POST /api/paddle                             Paddle webhook (subscription.*), signature checked; other products' prices are ignored
 //! POST /api/license/validate {key, install_id} → {key, pro_until}; a key works on up to MAX_DEVICES installations
 //! POST /api/license/portal {key}               → {url} of Paddle's page to cancel or change the subscription
+//! POST /api/license/deactivate {key, install_id} → {ok}; frees one of the key's computers ("Remove from this computer")
 
-export interface LicenseEnv {
+export interface LicenseEnv extends MailEnv {
   DB: D1Database;
   PADDLE_ENV?: string;
   PADDLE_CLIENT_TOKEN?: string;
@@ -17,6 +18,7 @@ export interface LicenseEnv {
   PADDLE_PRICE_YEARLY?: string;
 }
 
+import { keyMail, sendMail, type MailEnv } from "./mail";
 import { accountPage, buyPage, pickLang, t, welcomePage } from "./pages";
 
 export const MAX_DEVICES = 3;
@@ -41,7 +43,7 @@ export async function handleLicense(req: Request, env: LicenseEnv, path: string)
   if (path === "/account" && (req.method === "GET" || req.method === "POST")) return account(req, env);
   if (req.method === "POST" && path === "/account/portal") return accountPortal(req, env);
   if (req.method === "POST" && path === "/api/paddle") return webhook(req, env);
-  if (req.method === "POST" && (path === "/api/license/validate" || path === "/api/license/portal")) {
+  if (req.method === "POST" && (path === "/api/license/validate" || path === "/api/license/portal" || path === "/api/license/deactivate")) {
     const body = await req.text();
     if (body.length > 1024) return json({ error: "bad_request" }, 400);
     let v: any;
@@ -58,9 +60,20 @@ export async function handleLicense(req: Request, env: LicenseEnv, path: string)
     }
     const install = typeof v?.install_id === "string" && INSTALL_ID.test(v.install_id) ? v.install_id : null;
     if (install === null) return json({ error: "bad_request" }, 400);
+    if (path === "/api/license/deactivate") return key === "" ? json({ error: "unknown_key" }, 404) : deactivate(env.DB, key, install);
     return validate(env.DB, key, install);
   }
   return null;
+}
+
+/** Frees a computer's place on a key. If it is the computer the key was bought on, it also stops being found by its
+ *  installation id alone, or the next start there would take the place again. */
+async function deactivate(db: D1Database, key: string, install: string): Promise<Response> {
+  await db.batch([
+    db.prepare("DELETE FROM activations WHERE license_key = ?1 AND install_id = ?2").bind(key, install),
+    db.prepare("UPDATE subscriptions SET install_id = NULL WHERE license_key = ?1 AND install_id = ?2").bind(key, install),
+  ]);
+  return json({ ok: true });
 }
 
 function json(body: unknown, status = 200): Response {
@@ -164,11 +177,17 @@ async function webhook(req: Request, env: LicenseEnv): Promise<Response> {
     .bind(sub.id, sub.customer_id, String(sub.status), periodEnd(sub), key, install, txn, String(ev.occurred_at ?? ""), plan,
       Number.isFinite(created) ? Math.floor(created / 1000) : Math.floor(Date.now() / 1000), ref)
     .run();
-  // For the admin panel: the buyer's email, asked from Paddle once (subscription events do not carry it).
-  const known = await env.DB.prepare("SELECT email FROM subscriptions WHERE id = ?1").bind(sub.id).first<{ email: string | null }>();
+  // The buyer's email, asked from Paddle once (subscription events do not carry it): for the admin panel, and the
+  // moment it is first known the buyer is mailed their key, so that mail goes out once per subscription.
+  const known = await env.DB.prepare("SELECT email, license_key, plan FROM subscriptions WHERE id = ?1")
+    .bind(sub.id)
+    .first<{ email: string | null; license_key: string; plan: string }>();
   if (known !== null && known.email === null) {
     const email = await customerEmail(env, sub.customer_id);
-    if (email !== null) await env.DB.prepare("UPDATE subscriptions SET email = ?1 WHERE id = ?2").bind(email, sub.id).run();
+    if (email !== null) {
+      await env.DB.prepare("UPDATE subscriptions SET email = ?1 WHERE id = ?2").bind(email, sub.id).run();
+      await sendMail(env, { to: email, ...keyMail(known.license_key, known.plan), replyTo: env.OWNER_EMAIL });
+    }
   }
   if (install !== null) {
     await env.DB.prepare(
@@ -222,6 +241,37 @@ async function customerEmail(env: LicenseEnv, customer: string): Promise<string 
 
 function paddleApi(env: LicenseEnv): string {
   return env.PADDLE_ENV === "production" ? "https://api.paddle.com" : "https://sandbox-api.paddle.com";
+}
+
+/** For /admin: refunds the subscription's last paid transaction in full and cancels the subscription at once.
+ *  Paddle reviews refunds (usually approves them within minutes) and pays the money back; the license ends here now. */
+export async function refundLast(env: LicenseEnv, subId: string, reason: string): Promise<{ ok: string } | { error: string }> {
+  if (!env.PADDLE_API_KEY) return { error: "PADDLE_API_KEY is not set." };
+  const call = async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(`${paddleApi(env)}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${env.PADDLE_API_KEY}`, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const v = (await res.json().catch(() => ({}))) as any;
+    return { ok: res.ok, v, why: `${res.status} ${v?.error?.detail ?? v?.error?.code ?? ""}`.trim() };
+  };
+  try {
+    const list = await call("GET", `/transactions?subscription_id=${encodeURIComponent(subId)}&status=completed&order_by=billed_at[DESC]&per_page=1`);
+    const txn = list.ok ? list.v?.data?.[0] : undefined;
+    if (typeof txn?.id !== "string") return { error: list.ok ? "Paddle has no completed payment for this subscription." : `Paddle: ${list.why}` };
+    const refund = await call("POST", "/adjustments", { action: "refund", type: "full", transaction_id: txn.id, reason });
+    if (!refund.ok) return { error: `Paddle refused the refund of ${txn.id}: ${refund.why}` };
+    const cancel = await call("POST", `/subscriptions/${encodeURIComponent(subId)}/cancel`, { effective_from: "immediately" });
+    const total = txn?.details?.totals?.grand_total, currency = txn?.currency_code;
+    const amount = typeof total === "string" && typeof currency === "string" ? ` (${(Number(total) / 100).toFixed(2)} ${currency})` : "";
+    return {
+      ok: `Refund of ${txn.id}${amount} sent to Paddle (status: ${refund.v?.data?.status ?? "?"}).` +
+        (cancel.ok ? " Subscription canceled; no more charges." : ` Cancel it in Paddle: ${cancel.why}.`),
+    };
+  } catch (e) {
+    return { error: `Could not reach Paddle: ${e}` };
+  }
 }
 
 /** Paddle's customer-portal page for the subscription of `key`, or null (unknown key, issued by hand, or Paddle failed). */

@@ -10,17 +10,11 @@ Paddle is the seller of record: it charges the card, handles sales tax and VAT, 
 
 ## Which Paddle account
 
-**Recommended: the Paddle account you already have for bubbleTranslate.** It is already verified, and its payouts are already set up. deskMonk only needs:
+deskMonk has **its own live Paddle account ("deskMonk")**, separate from bubbleTranslate's, so each app only receives its own sales and payouts and reports stay apart. The account needs its own verification (identity, business, website review). Until its keys are set, `wrangler.toml` keeps the bubbleTranslate account's prices (see the comment there).
 
-- a second approved website (deskmonk.app)
-- a new product
+deskMonk still ignores subscriptions that aren't for its own two prices (`planOf` in `src/license.ts`).
 
-One thing to know: Paddle sends every webhook event to every notification destination, so each app also receives the other app's sales. Both apps need to handle that:
-
-- **deskMonk** ignores subscriptions that aren't for its own two prices (`planOf` in `src/license.ts`).
-- **bubbleTranslate** currently stores every subscription it receives in its Paddle mirror. deskMonk sales would therefore show up in its admin and CSV until it gets the same price-id check. That change is not done.
-
-The alternative is a separate Paddle account for deskMonk. It means the full verification again (identity, business, website review), which takes days.
+(It first ran on the bubbleTranslate account: product `pro_01m655e6q98g48am0eqdqfgre3` and a webhook to deskmonk.app stay there unused. They can be archived there by hand once nothing points at them.)
 
 ## 1. Get deskmonk.app approved (live account)
 
@@ -35,7 +29,7 @@ Go to Paddle → **Checkout → Website approval**, add `https://deskmonk.app`, 
 | Refund policy (14 days) | https://deskmonk.app/refunds |
 | A way to contact you | support@deskmonk.app (alias in the bubbleTranslate Google Workspace) |
 
-Approval usually takes a few working days, and Paddle may email you questions. Leave **Checkout → Checkout settings → Default payment link** on bubbleTranslate's page. The account has only one, and deskMonk's checkout doesn't need it: `/buy` opens Paddle's overlay on deskmonk.app itself, which only needs the domain approved.
+Approval usually takes a few working days, and Paddle may email you questions. Set **Checkout → Checkout settings → Default payment link** to `https://deskmonk.app/buy`: Paddle's emailed links ("update payment method") open there, and Paddle.js on that page opens their checkout by itself.
 
 ## 2. Catalog
 

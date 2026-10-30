@@ -18,12 +18,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Prompt {
     None,
     Consent,
     Trash,
     Delete,
+    /// Typing a license key (p).
+    Key(String),
 }
 
 struct App {
@@ -40,6 +42,9 @@ struct App {
     status: String,
     telemetry: Telemetry,
     plan: Plan,
+    /// A newer version on the website, found at startup; shown in the header.
+    update_check: Receiver<String>,
+    new_version: Option<String>,
 }
 
 fn main() -> io::Result<()> {
@@ -66,6 +71,13 @@ fn main() -> io::Result<()> {
     {
         plan.set_license(key, until);
     }
+    let (tx, update_check) = channel();
+    std::thread::spawn(move || {
+        // Only announced here: the terminal version may be the static Linux build, which the archives don't replace.
+        if let Some(deskmonk::update::Found::Available(v) | deskmonk::update::Found::Installed(v)) = deskmonk::update::check(false) {
+            let _ = tx.send(v);
+        }
+    });
     let prompt = if telemetry.needs_prompt() {
         Prompt::Consent
     } else {
@@ -83,6 +95,8 @@ fn main() -> io::Result<()> {
         status: String::new(),
         telemetry,
         plan,
+        update_check,
+        new_version: None,
     };
     app.start_scan();
     app.send_opened();
@@ -90,6 +104,19 @@ fn main() -> io::Result<()> {
 }
 
 impl App {
+    /// p: checks a typed key with the license server, like the desktop app's "Activate". Blocks the screen while it asks.
+    fn activate_key(&mut self, key: &str) {
+        self.status = match plan::validate(key, &self.telemetry.install_id) {
+            Ok((key, until)) if until > 0 => {
+                self.plan.set_license(key, until);
+                let date = plan::date(until);
+                tf!("Pro açık, {date} tarihine kadar.", "Pro is on until {date}.", "Pro activo hasta el {date}.")
+            }
+            Ok(_) => t("Bu anahtarın etkin bir aboneliği yok", "This key has no active subscription", "Esta clave no tiene una suscripción activa").into(),
+            Err(e) => e,
+        };
+    }
+
     /// Hardware detection spawns system tools, so it runs off the UI thread.
     fn send_opened(&self) {
         if self.telemetry.consent == Some(true) {
@@ -183,6 +210,19 @@ impl App {
                     _ if no => self.telemetry.set_consent(false),
                     _ => self.prompt = Prompt::Consent,
                 },
+                Prompt::Key(mut typed) => match key.code {
+                    KeyCode::Enter if !typed.trim().is_empty() => self.activate_key(typed.trim()),
+                    KeyCode::Esc => {}
+                    KeyCode::Backspace => {
+                        typed.pop();
+                        self.prompt = Prompt::Key(typed);
+                    }
+                    KeyCode::Char(c) if typed.len() < 32 => {
+                        typed.push(c.to_ascii_uppercase());
+                        self.prompt = Prompt::Key(typed);
+                    }
+                    _ => self.prompt = Prompt::Key(typed),
+                },
                 p @ (Prompt::Trash | Prompt::Delete) => {
                     if yes {
                         // Runs in the background; the screen keeps updating with progress.
@@ -253,9 +293,9 @@ impl App {
                         let left = human_size(self.plan.clean_left().unwrap_or(0));
                         self.telemetry.used("tui", "pro", "clean_limit");
                         self.status = tf!(
-                            "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız: deskmonk.app/buy, sonra deskmonk-tui --key ANAHTAR",
-                            "The free plan cleans 2 GB a day; {left} left today. No limit: deskmonk.app/buy, then deskmonk-tui --key KEY",
-                            "El plan gratuito limpia 2 GB al día; quedan {left} hoy. Sin límite: deskmonk.app/buy y luego deskmonk-tui --key CLAVE"
+                            "Ücretsiz plan günde 2 GB temizler; bugün {left} kaldı. Sınırsız: deskmonk.app/buy, sonra anahtar için p",
+                            "The free plan cleans 2 GB a day; {left} left today. No limit: deskmonk.app/buy, then p to enter the key",
+                            "El plan gratuito limpia 2 GB al día; quedan {left} hoy. Sin límite: deskmonk.app/buy y luego p para la clave"
                         );
                     }
                     KeyCode::Char('d') if self.selected_totals().0 > 0 => {
@@ -265,6 +305,7 @@ impl App {
                         self.prompt = Prompt::Delete
                     }
                     KeyCode::Char('r') if self.scanning.is_none() => self.start_scan(),
+                    KeyCode::Char('p') if plan::URL.is_some() => self.prompt = Prompt::Key(String::new()),
                     KeyCode::Char('t') if telemetry::URL.is_some() => {
                         let on = self.telemetry.consent != Some(true);
                         self.telemetry.set_consent(on);
@@ -309,9 +350,16 @@ impl App {
             }
             _ => String::new(),
         };
+        if let Ok(v) = self.update_check.try_recv() {
+            self.new_version = Some(v);
+        }
+        let update = match (&self.new_version, plan::URL) {
+            (Some(v), Some(site)) => tf!("  ⬆ Yeni sürüm {v}: {site}", "  ⬆ New version {v}: {site}", "  ⬆ Nueva versión {v}: {site}"),
+            _ => String::new(),
+        };
         f.render_widget(
             Paragraph::new(format!(
-                "deskMonk by pelamx  {}{scanning}",
+                "deskMonk by pelamx  {}{scanning}{update}",
                 self.root.display()
             ))
             .bold(),
@@ -375,15 +423,32 @@ impl App {
         } else {
             ""
         };
+        let pkey = if plan::URL.is_some() {
+            t("  p lisans anahtarı", "  p license key", "  p clave de licencia")
+        } else {
+            ""
+        };
         let keys = tf!(
-            "↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d temizle  D hepsini kalıcı sil  r yeniden tara{tkey}  l dil  q çık",
-            "↑↓ move  space select  a/n all/none  ←→ category  d clean  D delete all for good  r rescan{tkey}  l language  q quit",
-            "↑↓ mover  espacio elegir  a/n todo/nada  ←→ categoría  d limpiar  D borrar todo definitivamente  r reanalizar{tkey}  l idioma  q salir"
+            "↑↓ gezin  boşluk seç  a/n tümü/hiçbiri  ←→ kategori  d temizle  D hepsini kalıcı sil  r yeniden tara{tkey}{pkey}  l dil  q çık",
+            "↑↓ move  space select  a/n all/none  ←→ category  d clean  D delete all for good  r rescan{tkey}{pkey}  l language  q quit",
+            "↑↓ mover  espacio elegir  a/n todo/nada  ←→ categoría  d limpiar  D borrar todo definitivamente  r reanalizar{tkey}{pkey}  l idioma  q salir"
         );
         f.render_widget(Paragraph::new(keys).dim(), help);
 
-        let text = match self.prompt {
+        let (text, title) = (match &self.prompt {
             Prompt::None => return,
+            Prompt::Key(typed) => {
+                let pro = if self.plan.is_pro() {
+                    tf!("Pro açık, {} tarihine kadar.\n", "Pro is on until {}.\n", "Pro activo hasta el {}.\n", plan::date(self.plan.pro_until))
+                } else {
+                    String::new()
+                };
+                tf!(
+                    "{pro}Lisans anahtarı (deskmonk.app/buy): {typed}_\nEnter etkinleştir, Esc vazgeç",
+                    "{pro}License key (deskmonk.app/buy): {typed}_\nEnter activates, Esc cancels",
+                    "{pro}Clave de licencia (deskmonk.app/buy): {typed}_\nEnter activa, Esc cancela"
+                )
+            }
             Prompt::Consent => t(
                 "Anonim kullanım istatistikleri (dosya sayısı, boyut, işletim sistemi) ve donanım bilgileri\n(işlemci, bellek, disk, ekran kartı, pil: marka, model, doluluk) gönderilsin mi?\nDosya adları, yollar, seri numaraları ve kullanıcı adı asla gönderilmez.  [e]vet / [h]ayır",
                 "Send anonymous usage stats (file count, size, operating system) and hardware info\n(processor, memory, disk, graphics, battery: brand, model, usage)?\nFile names, paths, serial numbers and user names are never sent.  [y]es / [n]o",
@@ -406,13 +471,13 @@ impl App {
                     "Se borrarán DEFINITIVAMENTE {n} archivos ({size}), ¡no se puede deshacer! ¿Seguro? [s/n]"
                 )
             }
-        };
+        }, if matches!(self.prompt, Prompt::Key(_)) { " Pro " } else { t(" Onay ", " Confirm ", " Confirmar ") });
         let area = centered(f.area(), 70, 5);
         f.render_widget(Clear, area);
         f.render_widget(
             Paragraph::new(text)
                 .wrap(ratatui::widgets::Wrap { trim: true })
-                .block(Block::bordered().title(t(" Onay ", " Confirm ", " Confirmar "))),
+                .block(Block::bordered().title(title)),
             area,
         );
     }

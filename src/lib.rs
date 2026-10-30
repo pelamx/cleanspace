@@ -7,6 +7,7 @@ pub mod i18n;
 pub mod scan;
 pub mod speedtest;
 pub mod telemetry;
+pub mod update;
 pub mod vault;
 
 use scan::Item;
