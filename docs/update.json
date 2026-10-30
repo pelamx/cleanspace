@@ -1,7 +1,7 @@
 {
   "macos": {
-    "sha256": "48d168e9814c99e6758d0b93f4f3d7684a53115a8421208c0e4a8e22f2967633",
-    "url": "/downloads/deskMonk-0.5.0-macos.dmg",
-    "version": "0.5.0"
+    "sha256": "884c82f0106b1ec00369cb73c1a686410950cdc7d9283a63f578f53d9767b9db",
+    "url": "/downloads/deskMonk-0.5.1-macos.dmg",
+    "version": "0.5.1"
   }
 }

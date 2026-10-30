@@ -513,7 +513,7 @@ impl App {
             .fold((0, 0), |(n, s), i| (n + 1, s + i.size))
     }
 
-    fn sidebar(&mut self, ui: &mut Ui) {
+    fn sidebar(&mut self, ui: &mut Ui, height: f32) {
         let (_, _, _, muted) = palette(ui.visuals().dark_mode);
         ui.add_space(18.0);
         ui.label(RichText::new(t("   KATEGORİLER", "   CATEGORIES", "   CATEGORÍAS")).small().color(muted));
@@ -573,21 +573,21 @@ impl App {
             self.page = Page::Vault;
         }
         if telemetry::URL.is_some() {
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                ui.add_space(14.0);
-                let mut on = self.telemetry.consent == Some(true);
-                if ui
-                    .checkbox(
-                        &mut on,
-                        RichText::new(t("Anonim istatistik gönder", "Send anonymous stats", "Enviar estadísticas anónimas"))
-                            .small()
-                            .color(muted),
-                    )
-                    .changed()
-                {
-                    self.telemetry.set_consent(on);
-                }
-            });
+            // At the bottom when there is room, otherwise right below the last item (never on top of it).
+            ui.add_space((height - ui.min_rect().height() - 34.0).max(12.0));
+            let mut on = self.telemetry.consent == Some(true);
+            if ui
+                .checkbox(
+                    &mut on,
+                    RichText::new(t("Anonim istatistik gönder", "Send anonymous stats", "Enviar estadísticas anónimas"))
+                        .small()
+                        .color(muted),
+                )
+                .changed()
+            {
+                self.telemetry.set_consent(on);
+            }
+            ui.add_space(14.0);
         }
     }
 
@@ -2549,7 +2549,11 @@ impl eframe::App for App {
                     .inner_margin(Margin::symmetric(12, 0))
                     .stroke(Stroke::new(1.0, border)),
             )
-            .show(ui, |ui| self.sidebar(ui));
+            .show(ui, |ui| {
+                // Scrolls when the window is too short for every item.
+                let height = ui.available_height();
+                egui::ScrollArea::vertical().id_salt("sidebar").auto_shrink(false).show(ui, |ui| self.sidebar(ui, height));
+            });
         egui::Panel::bottom("footer")
             .frame(
                 egui::Frame::new()
