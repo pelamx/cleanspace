@@ -82,6 +82,36 @@ jobs:
           name: windows
           path: dist/*.zip
 
+  # Microsoft Store package. Only on a tag: it is the one artifact whose identity must match the
+  # Partner Center reservation, and a package built from a branch could never be submitted anyway.
+  # The Store signs the upload itself, so this stays unsigned — which is also why it is downloaded
+  # from here and handed to Partner Center rather than attached to the public release: nobody can
+  # install an unsigned .msix, and offering one would only produce support mail.
+  msix:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    env:
+      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+      MSIX_PUBLISHER_DISPLAY: ${{ vars.MSIX_PUBLISHER_DISPLAY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Identity cannot be guessed and a wrong one is rejected on upload, so stop here rather than
+      # produce a package that looks submittable and is not.
+      - name: The Store package needs its Partner Center identity
+        if: vars.MSIX_IDENTITY_NAME == '' || vars.MSIX_PUBLISHER == ''
+        run: |
+          echo "::error::MSIX_IDENTITY_NAME / MSIX_PUBLISHER are not set, so the package would carry a test identity."
+          echo "Copy both from Partner Center > Product > Product identity into Actions > Variables."
+          exit 1
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/msix.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msix
+          path: dist/*.msix
+
   # Static terminal UI: runs on any Linux of that CPU (servers, cloud images).
   tui-musl:
     strategy:
@@ -129,7 +159,8 @@ jobs:
       # only by these events, so without it every figure there stays at zero for this release.
       - name: Warn when the release reports no usage at all
         if: vars.DESKMONK_TELEMETRY_URL == ''
-        run: echo "::warning::DESKMONK_TELEMETRY_URL is empty: this release sends nothing, so /admin will show zero installs for it."
+        run: |
+          echo "::warning::DESKMONK_TELEMETRY_URL is empty, so this release sends nothing and /admin will show zero installs for it."
       - uses: actions/download-artifact@v4
         with:
           path: dist
