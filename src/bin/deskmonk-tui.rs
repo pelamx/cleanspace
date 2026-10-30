@@ -58,6 +58,7 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
     let telemetry = Telemetry::load();
+    telemetry.started("tui");
     let mut plan = Plan::load();
     // The paid period ran out: the subscription may have renewed. Asked only then, so offline starts stay instant.
     if plan::URL.is_some() && !plan.key.is_empty() && !plan.is_pro()

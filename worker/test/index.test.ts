@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { compareVersions, esc, hardwareHtml, humanSize } from "../src/admin";
+import { compareVersions, esc, hardwareHtml, humanSize, worldMap } from "../src/admin";
 import { parseEvent } from "../src/index";
 import { mayActivate, newKey, periodEnd, planOf, verifySignature } from "../src/license";
 import { buyPage, js, pickLang } from "../src/pages";
@@ -115,4 +115,11 @@ test("language: chosen, then country, then browser; prices filled in", () => {
   expect(money("de", USD.monthly)).toMatch(/2,50\s\$/);
   // Every language has every key, so no page shows English by accident.
   for (const lang of LANGS) expect(word(lang, "hero.title"), lang).not.toBe("");
+});
+
+test("world map puts a dot on each known country, none for unknown", () => {
+  const svg = worldMap([{ country: "TR", today: 3 }, { country: "?", today: 1 }]);
+  expect(svg.match(/class="spot"/g)).toHaveLength(1);
+  expect(svg).toContain("Türkiye: 3");
+  expect(svg).toContain('class="land" d="M');
 });

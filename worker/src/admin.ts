@@ -10,6 +10,7 @@
 import type { Env } from "./index";
 import { USD } from "./i18n";
 import { MAX_DEVICES, newKey } from "./license";
+import { COUNTRY_POINTS, LAND_ROWS, MAP_NORTH, MAP_STEP } from "./world";
 
 const DAY = 86400;
 /** The operator's day: Turkey time (UTC+3, no daylight saving). */
@@ -847,9 +848,43 @@ function countryName(cc: string): string {
 function places(countries: Row[]): string {
   const list = countries.filter((c) => c.today > 0).sort((a, b) => b.today - a.today);
   const total = list.reduce((a, c) => a + c.today, 0);
-  return `<div class="places"><p class="title">${icon("globe")}Active today by country <span>(${total})</span></p>
+  return `<div class="places"><div class="split">${worldMap(list)}<div>
+    <p class="title">${icon("globe")}Active today by country <span>(${total})</span></p>
     ${list.length ? `<div class="list">${list.map((c) => `<div class="place" title="${esc(countryName(c.country))}"><span class="flag">${flag(c.country)}</span>${esc(c.country === "?" ? "unknown" : c.country)}<b>${c.today}</b></div>`).join("")}</div>`
-      : `<p class="muted" style="margin:0">Nobody has opened deskMonk yet today.</p>`}</div>`;
+      : `<p class="muted" style="margin:0">Nobody has opened deskMonk yet today.</p>`}</div></div></div>`;
+}
+
+/** The land as one path of dots, built once per isolate: it never changes. */
+let landPath = "";
+function land(): string {
+  if (landPath) return landPath;
+  const parts: string[] = [];
+  LAND_ROWS.forEach((hex, y) => {
+    const bits = [...hex].map((c) => parseInt(c, 16).toString(2).padStart(4, "0")).join("");
+    for (let x = 0; x < bits.length; x++) if (bits[x] === "1") parts.push(`M${x + 0.5} ${y + 0.5}h0`);
+  });
+  landPath = parts.join("");
+  return landPath;
+}
+
+/** The dotted world with a glowing point on each country seen today, sized by how many.
+ *  Countries without a known point ("?", Tor) are only in the list beside it. */
+export function worldMap(list: Row[]): string {
+  const width = LAND_ROWS[0].length * 4;
+  const peak = Math.max(1, ...list.map((c) => c.today));
+  const spots = list
+    .map((c) => {
+      const at = COUNTRY_POINTS[c.country];
+      if (!at) return "";
+      const x = ((at[0] + 180) / MAP_STEP).toFixed(1);
+      const y = ((MAP_NORTH - at[1]) / MAP_STEP + 0.5).toFixed(1);
+      const size = 0.8 + Math.sqrt(c.today / peak) * 1.1;
+      return `<g class="spot"><title>${esc(countryName(c.country))}: ${c.today}</title>
+        <circle class="halo" cx="${x}" cy="${y}" r="${(size * 2.6).toFixed(2)}"/><circle class="core" cx="${x}" cy="${y}" r="${size.toFixed(2)}"/></g>`;
+    })
+    .join("");
+  return `<svg class="world" viewBox="0 0 ${width} ${LAND_ROWS.length}" role="img" aria-label="Map of today's active users">
+    <path class="land" d="${land()}"/>${spots}</svg>`;
 }
 
 // ---------- page frame ----------
@@ -994,6 +1029,14 @@ svg.win { width: 13px; height: 13px; vertical-align: -2px; color: #3b9cff; }
 .places .list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 .place { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 5px 10px; font-size: 13px; }
 .place .flag { font-size: 17px; line-height: 1; } .place b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.places .split { display: grid; gap: 18px; align-items: center; grid-template-columns: auto minmax(0, 1fr); }
+svg.world { height: 128px; width: auto; max-width: 100%; display: block; }
+svg.world .land { fill: none; stroke: #2f3550; stroke-width: .62; stroke-linecap: round; }
+svg.world .halo { fill: var(--brand); opacity: .22; animation: halo 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+svg.world .core { fill: #c3caff; filter: drop-shadow(0 0 1.2px var(--brand)); }
+svg.world .spot:hover .core { fill: #fff; }
+@keyframes halo { 0%, 100% { transform: scale(.8); opacity: .3; } 50% { transform: scale(1.15); opacity: .12; } }
+@media (prefers-reduced-motion: reduce) { svg.world .halo { animation: none; } }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; white-space: nowrap; }
@@ -1053,5 +1096,7 @@ form.inline button { font-size: 12px; padding: 5px 10px; }
   .appbar { padding: 8px 16px; } .appbar a.btn span { display: none; }
   .main.solo { padding: 12px 16px 40px; }
   .hbar { grid-template-columns: 100px 1fr 70px; }
+  .places .split { grid-template-columns: minmax(0, 1fr); }
+  svg.world { width: 100%; height: auto; }
 }
 `;

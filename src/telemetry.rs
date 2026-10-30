@@ -1,4 +1,6 @@
-//! Opt-in anonymous usage stats. Never sends file names or paths, only counts, byte totals and hardware specs.
+//! Anonymous usage stats. Never sends file names or paths, only counts, byte totals and hardware specs.
+//! Every copy sends one basic "open" per start (random ID, version, OS, plan) so installs and active users can
+//! be counted; everything else (hardware, scans, cleaning, features) only after the user agreed.
 //! Disabled entirely unless built with `DESKMONK_TELEMETRY_URL=https://host/api/events`.
 
 use crate::hardware::Component;
@@ -44,6 +46,15 @@ impl Telemetry {
             id
         });
         Self { install_id, consent }
+    }
+
+    /// The basic ping at every start, from users who haven't agreed to the full stats; those who agreed send
+    /// the full "open" (with hardware) instead. shortcut: a user who says yes in the first session is counted
+    /// as opening twice that day, which doesn't change installs or active users.
+    pub fn started(&self, client: &str) {
+        if self.consent != Some(true) {
+            self.post(serde_json::json!({ "kind": "open", "client": client, "detail": "basic" }));
+        }
     }
 
     pub fn set_consent(&mut self, yes: bool) {
@@ -101,8 +112,14 @@ impl Telemetry {
         self.send(serde_json::json!({ "kind": kind, "client": client, "detail": detail }));
     }
 
-    fn send(&self, mut event: serde_json::Value) {
-        let (Some(url), Some(true)) = (URL, self.consent) else {
+    fn send(&self, event: serde_json::Value) {
+        if self.consent == Some(true) {
+            self.post(event);
+        }
+    }
+
+    fn post(&self, mut event: serde_json::Value) {
+        let Some(url) = URL else {
             return;
         };
         event["install_id"] = self.install_id.clone().into();

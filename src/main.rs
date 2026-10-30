@@ -79,6 +79,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             setup_style(&cc.egui_ctx);
             let mut app = App::default();
+            app.telemetry.started("gui");
             app.detect_hardware(cc.egui_ctx.clone());
             #[cfg(target_os = "macos")]
             if deskmonk::sandboxed() {

@@ -46,13 +46,25 @@ done
 iconutil -c icns "$WORK/icon.iconset" -o "$APP/Contents/Resources/icon.icns"
 
 if [ "$MODE" = dmg ]; then
-  # shortcut: ad-hoc signature, not notarized; users confirm "Open Anyway" once. The Developer ID certificate
-  # in the keychain plus notarytool would remove that step.
-  codesign --force --deep --sign - "$APP"
+  # With the Developer ID certificate in the keychain (this Mac): signed with the hardened runtime, then the DMG is
+  # notarized by Apple and stapled, so it opens without warnings. Without it (CI): ad-hoc signed, and users confirm
+  # "Open Anyway" once. NOTARY_PROFILE is a `xcrun notarytool store-credentials` profile of the same Apple team.
+  IDENTITY=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
+  NOTARY_PROFILE=${NOTARY_PROFILE:-bubbleTranslate-notary}
+  if [ -n "$IDENTITY" ]; then
+    codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+  else
+    codesign --force --deep --sign - "$APP"
+  fi
   ln -s /Applications "$WORK/out/Applications"
   # hdiutil sometimes fails with "resource busy" right after the files were written; one retry.
   DMG="dist/deskMonk-$VERSION-macos.dmg"
   hdiutil create -volname deskMonk -srcfolder "$WORK/out" -ov -format UDZO "$DMG" || { sleep 3; hdiutil create -volname deskMonk -srcfolder "$WORK/out" -ov -format UDZO "$DMG"; }
+  if [ -n "$IDENTITY" ]; then
+    codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DMG"
+  fi
   echo "$DMG"
   exit
 fi
