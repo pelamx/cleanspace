@@ -22,14 +22,14 @@ const OSES = ["macos", "windows", "linux"];
 const MOBILE = ["ios", "android"];
 /** A phone counts as live while its heartbeat keeps arriving: every 4 minutes on screen (telemetry.dart in the app). */
 const LIVE = 300;
-/** Phone events minus the operator's own installations, and each installation's first and last event. */
-const MO = "mo AS (SELECT * FROM events WHERE os IN ('ios', 'android') AND install_id NOT IN (SELECT install_id FROM ignored_installs))";
-const MO_F = "f AS (SELECT install_id, MAX(os) AS os, MIN(ts) AS first, MAX(ts) AS last FROM mo GROUP BY install_id)";
 /** Phone or tablet, as each app reports it from its screen size (hardware.dart, spec kind "Tür"). */
 const MO_T = "t AS (SELECT h.install_id, json_extract(s.value, '$.name') AS type FROM hardware h, json_each(h.specs) s WHERE json_extract(s.value, '$.kind') = 'Tür')";
+/** Phone events minus the operator's own installations, each with its type, and each installation's first and last event. */
+const MO = `${MO_T}, mo AS (SELECT e.*, t.type FROM events e LEFT JOIN t ON t.install_id = e.install_id WHERE e.os IN ('ios', 'android') AND e.install_id NOT IN (SELECT install_id FROM ignored_installs))`;
+const MO_F = "f AS (SELECT install_id, MAX(os) AS os, MAX(type) AS type, MIN(ts) AS first, MAX(ts) AS last FROM mo GROUP BY install_id)";
 const STORE_NAME: Record<string, string> = { appstore: "App Store", playstore: "Google Play" };
-/** Events minus the operator's own installations. */
-const EV = "ev AS (SELECT * FROM events WHERE install_id NOT IN (SELECT install_id FROM ignored_installs))";
+/** Events minus the operator's own installations, each with its type (desktops have none). */
+const EV = `${MO_T}, ev AS (SELECT e.*, t.type FROM events e LEFT JOIN t ON t.install_id = e.install_id WHERE e.install_id NOT IN (SELECT install_id FROM ignored_installs))`;
 const KIND_LABEL: Record<string, string> = {
   Bilgisayar: "Computer", Sistem: "System", "İşlemci": "Processor", Bellek: "Memory", "Ekran kartı": "Graphics",
   Ekran: "Display", Depolama: "Storage", "Disk alanı": "Disk space", Pil: "Battery", Telefon: "Phone", "Tür": "Type",
@@ -248,6 +248,8 @@ async function usersQuery(db: D1Database, since: number, limit: number): Promise
                 WHERE h.install_id = e.install_id AND json_extract(s.value, '$.kind') = 'İşlemci' LIMIT 1) AS cpu,
               (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
                 WHERE h.install_id = e.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone,
+              (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
+                WHERE h.install_id = e.install_id AND json_extract(s.value, '$.kind') = 'Tür' LIMIT 1) AS type,
               MIN(e.ts) AS first_seen, MAX(e.ts) AS last_seen, SUM(e.kind = 'open') AS opens, SUM(e.kind = 'scan') AS scans,
               SUM(e.kind = 'clean') AS cleans, SUM(CASE WHEN e.kind = 'clean' THEN e.bytes ELSE 0 END) AS freed,
               SUM(e.kind = 'vault') AS vault, SUM(e.kind = 'focus') AS focus, SUM(e.kind = 'pro') AS pro_views,
@@ -268,59 +270,62 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   const yesterday = today - DAY;
   const week = t - 7 * DAY;
   const month = t - 30 * DAY;
-  const first = `f AS (SELECT install_id, MAX(os) AS os, MIN(ts) AS first, MAX(ts) AS last FROM ev GROUP BY install_id)`;
+  const first = `f AS (SELECT install_id, MAX(os) AS os, MAX(type) AS type, MIN(ts) AS first, MAX(ts) AS last FROM ev GROUP BY install_id)`;
   const local = (col: string) => `date(${col} + ${TZ}, 'unixepoch')`;
+  const spaceSums = `SUM(CASE WHEN kind = 'scan' THEN bytes END) AS found, SUM(CASE WHEN kind = 'clean' THEN bytes END) AS cleaned,
+                  SUM(CASE WHEN kind = 'clean' THEN files END) AS files, SUM(kind = 'scan') AS scans,
+                  SUM(CASE WHEN kind = 'scan' THEN duplicate_bytes END) AS dup, SUM(CASE WHEN kind = 'scan' THEN junk_bytes END) AS junk,
+                  SUM(CASE WHEN kind = 'scan' THEN old_download_bytes END) AS old, SUM(CASE WHEN kind = 'scan' THEN large_bytes END) AS large`;
   const results = await db.batch([
-    db.prepare(`WITH ${EV}, ${first} SELECT os, COUNT(*) AS total, SUM(first >= ?1) AS today, SUM(first >= ?2 AND first < ?1) AS yesterday,
+    db.prepare(`WITH ${EV}, ${first} SELECT os, type, COUNT(*) AS total, SUM(first >= ?1) AS today, SUM(first >= ?2 AND first < ?1) AS yesterday,
                   SUM(first <= ?3) AS day_base, SUM(first <= ?3 AND last - first >= ${DAY}) AS day_back,
                   SUM(first <= ?4) AS week_base, SUM(first <= ?4 AND last - first >= ${7 * DAY}) AS week_back,
-                  SUM(last >= ?5 AND last < ?4) AS lost FROM f GROUP BY os`).bind(today, yesterday, t - DAY, week, month),
-    db.prepare(`WITH ${EV} SELECT os, COUNT(DISTINCT CASE WHEN ts >= ?1 THEN install_id END) AS today,
+                  SUM(last >= ?5 AND last < ?4) AS lost FROM f GROUP BY os, type`).bind(today, yesterday, t - DAY, week, month),
+    db.prepare(`WITH ${EV} SELECT os, type, COUNT(DISTINCT CASE WHEN ts >= ?1 THEN install_id END) AS today,
                   COUNT(DISTINCT CASE WHEN ts >= ?2 AND ts < ?1 THEN install_id END) AS yesterday,
                   COUNT(DISTINCT CASE WHEN ts >= ?3 THEN install_id END) AS week, COUNT(DISTINCT install_id) AS month,
                   SUM(CASE WHEN kind = 'clean' AND ts >= ?1 THEN bytes ELSE 0 END) AS cleaned_today,
                   SUM(CASE WHEN kind = 'clean' AND ts >= ?2 AND ts < ?1 THEN bytes ELSE 0 END) AS cleaned_yesterday
-                FROM ev WHERE ts >= ?4 GROUP BY os`).bind(today, yesterday, week, month),
-    db.prepare(`WITH ${EV}, ${first} SELECT ${local("first")} AS d, COUNT(*) AS n FROM f WHERE first >= ?1 GROUP BY d`).bind(today - 29 * DAY),
-    db.prepare(`SELECT e.os, COUNT(DISTINCT e.install_id) AS total, COUNT(DISTINCT CASE WHEN e.ts >= ?1 THEN e.install_id END) AS week
-                FROM events e JOIN ignored_installs USING (install_id) GROUP BY e.os`).bind(week),
+                FROM ev WHERE ts >= ?4 GROUP BY os, type`).bind(today, yesterday, week, month),
+    db.prepare(`WITH ${EV}, ${first} SELECT ${local("first")} AS d, os, type, COUNT(*) AS n FROM f WHERE first >= ?1 GROUP BY d, os, type`).bind(today - 29 * DAY),
+    db.prepare(`WITH ${MO_T} SELECT e.os, t.type, COUNT(DISTINCT e.install_id) AS total, COUNT(DISTINCT CASE WHEN e.ts >= ?1 THEN e.install_id END) AS week
+                FROM events e JOIN ignored_installs USING (install_id) LEFT JOIN t ON t.install_id = e.install_id GROUP BY e.os, t.type`).bind(week),
     // Plan and store of each installation's latest event (SQLite takes the bare columns from the MAX(ts) row).
-    db.prepare(`WITH ${EV}, last AS (SELECT install_id, plan, channel, MAX(ts) FROM ev WHERE ts >= ?1 AND plan IS NOT NULL GROUP BY install_id)
-                SELECT channel, plan, COUNT(*) AS n FROM last GROUP BY channel, plan`).bind(month),
-    db.prepare(`WITH ${EV} SELECT kind, COALESCE(detail, '') AS detail, COUNT(*) AS n, COUNT(DISTINCT install_id) AS users,
+    db.prepare(`WITH ${EV}, last AS (SELECT install_id, os, type, plan, channel, MAX(ts) FROM ev WHERE ts >= ?1 AND plan IS NOT NULL GROUP BY install_id)
+                SELECT channel, plan, os, type, COUNT(*) AS n FROM last GROUP BY channel, plan, os, type`).bind(month),
+    db.prepare(`WITH ${EV} SELECT kind, COALESCE(detail, '') AS detail, os, type, COUNT(*) AS n, COUNT(DISTINCT install_id) AS users,
                   SUM(ts >= ?2) AS week, SUM(ts >= ?3) AS today, SUM(ts >= ?4 AND ts < ?3) AS yesterday, SUM(bytes) AS bytes
-                FROM ev WHERE ts >= ?1 GROUP BY kind, detail`).bind(month, week, today, yesterday),
+                FROM ev WHERE ts >= ?1 GROUP BY kind, detail, os, type`).bind(month, week, today, yesterday),
     db.prepare(`WITH ${EV} SELECT COALESCE(country, '?') AS country, COUNT(DISTINCT CASE WHEN ts >= ?1 THEN install_id END) AS today,
                   COUNT(DISTINCT CASE WHEN ts >= ?2 THEN install_id END) AS week, COUNT(DISTINCT install_id) AS month,
                   COUNT(DISTINCT CASE WHEN plan = 'pro' THEN install_id END) AS pro
                 FROM ev WHERE ts >= ?3 GROUP BY 1 ORDER BY month DESC, week DESC`).bind(today, week, month),
-    db.prepare(`WITH ${EV} SELECT SUM(CASE WHEN kind = 'scan' THEN bytes END) AS found, SUM(CASE WHEN kind = 'clean' THEN bytes END) AS cleaned,
-                  SUM(CASE WHEN kind = 'clean' THEN files END) AS files, SUM(kind = 'scan') AS scans,
-                  SUM(CASE WHEN kind = 'scan' THEN duplicate_bytes END) AS dup, SUM(CASE WHEN kind = 'scan' THEN junk_bytes END) AS junk,
-                  SUM(CASE WHEN kind = 'scan' THEN old_download_bytes END) AS old, SUM(CASE WHEN kind = 'scan' THEN large_bytes END) AS large
-                FROM ev`),
+    db.prepare(`WITH ${EV} SELECT ${spaceSums} FROM ev`),
     // Each installation once, at the version of its latest event (bare columns come from the MAX(ts) row).
-    db.prepare(`WITH ${EV}, cur AS (SELECT install_id, os, version, MAX(ts) FROM ev WHERE ts >= ?1 AND version IS NOT NULL GROUP BY install_id)
-                SELECT version, os, COUNT(*) AS n FROM cur GROUP BY version, os`).bind(month),
+    db.prepare(`WITH ${EV}, cur AS (SELECT install_id, os, type, version, MAX(ts) FROM ev WHERE ts >= ?1 AND version IS NOT NULL GROUP BY install_id)
+                SELECT version, os, type, COUNT(*) AS n FROM cur GROUP BY version, os, type`).bind(month),
     db.prepare(`WITH ${EV} SELECT client, COUNT(DISTINCT install_id) AS n FROM ev WHERE ts >= ?1 GROUP BY client ORDER BY n DESC`).bind(month),
-    db.prepare(`SELECT json_extract(s.value, '$.kind') AS kind, json_extract(s.value, '$.brand') AS brand, COUNT(DISTINCT h.install_id) AS n
-                FROM hardware h, json_each(h.specs) s
+    db.prepare(`WITH ${EV}, ${first} SELECT json_extract(s.value, '$.kind') AS kind, json_extract(s.value, '$.brand') AS brand, f.os, f.type, COUNT(DISTINCT h.install_id) AS n
+                FROM hardware h LEFT JOIN f ON f.install_id = h.install_id, json_each(h.specs) s
                 WHERE json_extract(s.value, '$.brand') != '' AND h.install_id NOT IN (SELECT install_id FROM ignored_installs)
-                GROUP BY 1, 2 ORDER BY 1, 3 DESC`),
+                GROUP BY 1, 2, 3, 4`),
     db.prepare(`WITH ${EV} SELECT ${local("ts")} AS d, COUNT(DISTINCT install_id) AS active, SUM(kind = 'scan') AS scans, SUM(kind = 'clean') AS cleans,
                   SUM(CASE WHEN kind = 'clean' THEN bytes ELSE 0 END) AS freed, SUM(kind = 'vault') AS vault, SUM(kind = 'focus') AS focus,
                   SUM(kind = 'pro') AS pro_views FROM ev WHERE ts >= ?1 GROUP BY d ORDER BY d DESC`).bind(today - 29 * DAY),
     subsQuery(db),
     db.prepare("SELECT ts, action, ref, detail FROM admin_log ORDER BY id DESC LIMIT 60"),
+    db.prepare(`WITH ${EV} SELECT COALESCE(country, '?') AS country, os, type, COUNT(DISTINCT install_id) AS n FROM ev WHERE ts >= ?1 GROUP BY 1, 2, 3`).bind(month),
+    db.prepare(`WITH ${EV} SELECT os, type, ${spaceSums} FROM ev GROUP BY os, type`),
+    db.prepare(`WITH ${EV} SELECT ${local("ts")} AS d, os, type, COUNT(DISTINCT install_id) AS n FROM ev WHERE ts >= ?1 GROUP BY 1, 2, 3`).bind(today - 29 * DAY),
   ]);
-  const [installs, active, series, mineOs, plans, features, countries, space, versions, clients, brands, daily, subsAll, log] =
+  const [installs, active, series, mineOs, plans, features, countries, space, versions, clients, brands, daily, subsAll, log, countryDevices, spaceDevices, dailyDevices] =
     results.map((r) => (r.results ?? []) as Row[]);
   const users = await usersQuery(db, month, 500);
   const [mobileNow, mobile] = await Promise.all([mobileLiveData(db, t), mobileData(db, t)]);
 
   const sum = (rows: Row[], f: string) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
-  const byOs = (rows: Row[], f: string) => Object.fromEntries(rows.map((r) => [r.os, Number(r[f]) || 0]));
-  const feature = (kind: string, detail = "") => features.find((r) => r.kind === kind && r.detail === detail) ?? {};
+  const featureRows = (kind: string, detail = "") => features.filter((r) => r.kind === kind && r.detail === detail);
+  const feature = (kind: string, detail = "") => merge(featureRows(kind, detail));
   const featureAll = (kind: string) => features.filter((r) => r.kind === kind);
 
   // Subscriptions
@@ -338,19 +343,29 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   const ending = subsAll.filter((s) => live(s) && s.period_end <= t + 7 * DAY);
   const newPaddle = (from: number, to = Infinity) => paddleSubs.filter((s) => (s.created_at ?? 0) >= from && (s.created_at ?? 0) < to).length;
   const bought = featureAll("bought");
-  const playstoreToday = feature("bought", "playstore").today ?? 0;
   const storeToday = sum(bought, "today");
   const storeYesterday = sum(bought, "yesterday");
 
   // Users and counts
   const real = users.filter((u) => !u.mine).length;
   const own = users.length - real;
-  const seriesMap = Object.fromEntries(series.map((r) => [r.d, r.n]));
+  const seriesMap: Record<string, number> = series.reduce((acc, r) => ({ ...acc, [r.d]: (acc[r.d] ?? 0) + r.n }), {});
   const days14 = [...Array(14)].map((_, i) => date(today + TZ - (13 - i) * DAY));
   const peak = Math.max(1, ...days14.map((d) => seriesMap[d] ?? 0));
+  const seriesSplit = (d: string) => Object.entries(byPlatform(series.filter((r) => r.d === d), "n")).map(([k, n]) => `${platformName(k)} ${n}`).join(", ");
   const bars = days14
-    .map((d, i) => `<div style="height:${Math.round(((seriesMap[d] ?? 0) / peak) * 100)}%" title="${d}: ${seriesMap[d] ?? 0}${i === 13 ? " (today)" : ""}"></div>`)
+    .map((d, i) => `<div style="height:${Math.round(((seriesMap[d] ?? 0) / peak) * 100)}%" title="${d}: ${seriesMap[d] ?? 0}${i === 13 ? " (today)" : ""}${seriesMap[d] ? ` (${seriesSplit(d)})` : ""}"></div>`)
     .join("");
+  const proStore = plans.filter((p) => p.plan === "pro" && STORE_NAME[p.channel]);
+  const featureCols = deviceCols(features);
+  const devicesOf = (k: string, rows: Row[], f = "n") => sum(rows.filter((r) => platform(r) === k), f);
+  const storeLine = (os: string) => DEVICES.filter(([o]) => o === os).map(([o, type, name]) => `${name} ${devicesOf(`${o}:${type}`, proStore)}`).join(" · ");
+  const brandRows = [...new Set(brands.map((b) => `${b.kind}\n${b.brand}`))]
+    .map((key) => { const [kind, brand] = key.split("\n"); const rows = brands.filter((b) => b.kind === kind && b.brand === brand); return { kind, brand, rows, n: sum(rows, "n") }; })
+    .sort((a, b) => a.kind.localeCompare(b.kind) || b.n - a.n);
+  const brandCols = deviceCols(brands);
+  const countryCols = deviceCols(countryDevices);
+  const dailyCols = deviceCols(dailyDevices);
   const todayLabel = new Date((today + TZ) * 1000).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 
   const q = query.toLowerCase();
@@ -393,14 +408,14 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="label">Today <span class="aside">· ${esc(todayLabel)} (Turkey time, vs yesterday)</span></p>
     <div class="grid">
       ${tile({ icon: "userPlus", tone: "t-blue", title: "New installs", hint: "Opened deskMonk for the first time",
-        value: sum(installs, "today"), extra: delta(sum(installs, "today"), sum(installs, "yesterday")), rows: osBars(byOs(installs, "today")) })}
+        value: sum(installs, "today"), extra: delta(sum(installs, "today"), sum(installs, "yesterday")), rows: osBars(byPlatform(installs, "today")) })}
       ${tile({ icon: "users", tone: "t-teal", title: "Active users", hint: "Used deskMonk today",
-        value: sum(active, "today"), extra: delta(sum(active, "today"), sum(active, "yesterday")), rows: osBars(byOs(active, "today")) })}
+        value: sum(active, "today"), extra: delta(sum(active, "today"), sum(active, "yesterday")), rows: osBars(byPlatform(active, "today")) })}
       ${tile({ icon: "broom", tone: "t-green", title: "Space freed", hint: "Cleaned by everyone today",
-        value: humanSize(sum(active, "cleaned_today")), extra: deltaText(humanSize(sum(active, "cleaned_yesterday"))), rows: osBars(byOs(active, "cleaned_today"), humanSize) })}
+        value: humanSize(sum(active, "cleaned_today")), extra: deltaText(humanSize(sum(active, "cleaned_yesterday"))), rows: osBars(byPlatform(active, "cleaned_today"), humanSize) })}
       ${tile({ icon: "cart", tone: "t-red", title: "New Pro customers", hint: "Paddle + app stores",
         value: newPaddle(today) + storeToday, extra: delta(newPaddle(today) + storeToday, newPaddle(yesterday, today) + storeYesterday),
-        rows: bars3([["Paddle", newPaddle(today), "web"], ["App Store", storeToday - playstoreToday, "store"], ["Google Play", playstoreToday, "play"]]) })}
+        rows: bars3([["Paddle", newPaddle(today), "web"], ...storeBars(bought, "today")]) })}
     </div>
     ${places(countries)}
   </section>
@@ -409,17 +424,17 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="label">Overall</p>
     <div class="grid five">
       ${tile({ icon: "star", tone: "t-orange", title: "Pro now", value: livePaddle.length + liveManual.length + appstorePro + playstorePro,
-        rows: bars3([["Paddle", livePaddle.length, "web"], ["App Store", appstorePro, "store"], ["Google Play", playstorePro, "play"], ["Manual", liveManual.length, "manual"]]),
+        rows: bars3([["Paddle", livePaddle.length, "web"], ...storeBars(proStore, "n"), ["Manual", liveManual.length, "manual"]]),
         foot: `${monthly} monthly · ${yearly} yearly on Paddle`, footIcon: "calendar" })}
-      ${tile({ icon: "bars", tone: "t-violet", title: "Active this week", value: sum(active, "week"), rows: osBars(byOs(active, "week")),
+      ${tile({ icon: "bars", tone: "t-violet", title: "Active this week", value: sum(active, "week"), rows: osBars(byPlatform(active, "week")),
         foot: `${freeInstalls} free · ${proInstalls} Pro (last 30 days)`, footIcon: "users" })}
-      ${tile({ icon: "download", tone: "t-blue", title: "Installs ever seen", value: sum(installs, "total"), rows: osBars(byOs(installs, "total")),
+      ${tile({ icon: "download", tone: "t-blue", title: "Installs ever seen", value: sum(installs, "total"), rows: osBars(byPlatform(installs, "total")),
         foot: `${sum(active, "month")} active this month`, footIcon: "chart" })}
       ${tile({ icon: "clock", tone: "t-orange", title: "Ending in 7 days", value: ending.length, cls: ending.length ? "alert" : "",
         rows: bars3([["Paddle", ending.filter((s) => s.customer_id !== "manual").length, "web"], ["Manual", ending.filter((s) => s.customer_id === "manual").length, "manual"]]),
         foot: `${paddleSubs.filter((s) => s.status === "past_due").length} payment problems (past due)`, footIcon: "card" })}
       ${tile({ icon: "laptop", tone: "t-blue", cls: "mine", title: `Your own machines <span class="info" title="Installations you marked as yours. They are left out of every other number.">ⓘ</span>`,
-        value: sum(mineOs, "total"), rows: osBars(byOs(mineOs, "total")), foot: `${sum(mineOs, "week")} active this week · not counted`, footIcon: "laptop" })}
+        value: sum(mineOs, "total"), rows: osBars(byPlatform(mineOs, "total")), foot: `${sum(mineOs, "week")} active this week · not counted`, footIcon: "laptop" })}
     </div>
     <p class="label" style="margin-top:20px">New installs, last 14 days</p>
     <div class="bars">${bars}</div>
@@ -433,35 +448,37 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   <section class="card">
     <p class="label">Features, last 30 days</p>
     <div class="scroll"><table>
-      <tr><th>Feature</th><th class="num">Uses</th><th class="num">Users</th><th class="num">Last 7 days</th><th class="num">Today</th><th></th></tr>
+      <tr><th>Feature</th><th class="num">Uses</th><th class="num">Users</th><th class="num">Last 7 days</th><th class="num">Today</th>${colHead(featureCols)}<th></th></tr>
       ${[
-        ["App opened", feature("open"), ""],
-        ["Scan", feature("scan"), `${humanSize(feature("scan").bytes ?? 0)} found`],
-        ["Clean", feature("clean"), `${humanSize(feature("clean").bytes ?? 0)} freed`],
-        ["Vault: encrypt", feature("vault", "encrypt"), ""],
-        ["Vault: open", feature("vault", "open"), ""],
-        ["Monk mode: focus finished", feature("focus"), ""],
-        ["Pro dialog opened", merge(featureAll("pro")), ""],
-        ["App store purchase", merge(bought), ""],
+        ["App opened", featureRows("open"), ""],
+        ["Scan", featureRows("scan"), `${humanSize(feature("scan").bytes ?? 0)} found`],
+        ["Clean", featureRows("clean"), `${humanSize(feature("clean").bytes ?? 0)} freed`],
+        ["Vault: encrypt", featureRows("vault", "encrypt"), ""],
+        ["Vault: open", featureRows("vault", "open"), ""],
+        ["Monk mode: focus finished", featureRows("focus"), ""],
+        ["App lock: app locked", featureRows("applock", "lock"), ""],
+        ["Pro dialog opened", featureAll("pro"), ""],
+        ["App store purchase", bought, ""],
       ]
-        .map(([label, r, extra]: any) => `<tr><td>${label}</td><td class="num">${r.n ?? 0}</td><td class="num">${r.users ?? 0}</td>
-          <td class="num">${r.week ?? 0}</td><td class="num">${r.today ?? 0}</td><td class="muted">${extra}</td></tr>`)
+        .map(([label, rows, extra]: any) => { const r = merge(rows); return `<tr><td>${label}</td><td class="num">${r.n}</td><td class="num">${r.users}</td>
+          <td class="num">${r.week}</td><td class="num">${r.today}</td>${colCells(featureCols, rows)}<td class="muted">${extra}</td></tr>`; })
         .join("")}
     </table></div>
-    <p class="muted foot">Vault, Monk mode, Pro dialog and plan are reported by deskMonk 0.4 and later. Users = installations.</p>
+    <p class="muted foot">Vault, Monk mode, Pro dialog and plan are reported by deskMonk 0.4 and later. Users = installations. Desktop and device columns count uses.</p>
   </section>
 
   <section class="card">
     <p class="label">Upgrade funnel, last 30 days</p>
     <div class="scroll"><table>
-      <tr><th>What opened the Pro dialog</th><th class="num">Times</th><th class="num">Installs</th></tr>
+      <tr><th>What opened the Pro dialog</th><th class="num">Times</th><th class="num">Installs</th>${colHead(featureCols)}</tr>
       ${[
-        ["⭐ Get Pro button", "button"], ["Daily clean limit (2 GB)", "clean_limit"], ["Vault limit (3 a day / 200 MB)", "vault_limit"], ["App lock limit (1 app)", "applock_limit"],
+        ["⭐ Get Pro button", "button"], ["Top bar button (mobile)", "topbar"], ["Banner on Clean (mobile)", "clean_banner"], ["Daily clean limit (2 GB)", "clean_limit"],
+        ["Vault limit (3 a day / 200 MB)", "vault_limit"], ["Vault size limit (mobile)", "vault_size"], ["App lock limit (1 app)", "applock_limit"],
       ]
-        .map(([label, d]) => { const r = feature("pro", d); return `<tr><td>${label}</td><td class="num">${r.n ?? 0}</td><td class="num">${r.users ?? 0}</td></tr>`; })
+        .map(([label, d]) => { const r = feature("pro", d); return `<tr><td>${label}</td><td class="num">${r.n}</td><td class="num">${r.users}</td>${colCells(featureCols, featureRows("pro", d))}</tr>`; })
         .join("")}
       <tr class="total"><td>Bought Pro (Paddle + app stores)</td><td class="num">${newPaddle(month) + sum(bought, "n")}</td>
-        <td class="num">${ratio(newPaddle(month) + sum(bought, "n"), sum(featureAll("pro"), "users"))} of installs that saw the dialog</td></tr>
+        <td class="num">${ratio(newPaddle(month) + sum(bought, "n"), sum(featureAll("pro"), "users"))} of installs that saw the dialog</td>${colCells(featureCols, [...bought, { n: newPaddle(month) }])}</tr>
     </table></div>
   </section>
 
@@ -469,8 +486,8 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     <p class="label">Growth &amp; retention</p>
     <div class="scroll"><table>
       <tr><th>Platform</th><th class="num">Installs</th><th>Came back next day</th><th>Still using after a week</th><th class="num">Lost</th></tr>
-      ${[...[...OSES, ...MOBILE].map((os) => installs.find((r) => r.os === os) ?? { os }), totalRow(installs)]
-        .map((r) => `<tr${r.os === "all" ? ' class="total"' : ""}><td>${osName(r.os)}</td><td class="num">${r.total ?? 0}</td>
+      ${[...[...OSES, ...mobileKeys(installs)].map((k): Row => ({ ...totalRow(installs.filter((r) => platform(r) === k)), os: k })), totalRow(installs)]
+        .map((r) => `<tr${r.os === "all" ? ' class="total"' : ""}><td>${platformName(r.os)}</td><td class="num">${r.total ?? 0}</td>
           <td>${ratio(r.day_back ?? 0, r.day_base ?? 0)}</td><td>${ratio(r.week_back ?? 0, r.week_base ?? 0)}</td><td class="num">${r.lost ?? 0}</td></tr>`)
         .join("")}
     </table></div>
@@ -487,11 +504,11 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
   <section class="card">
     <p class="label">Countries, last 30 days</p>
     <div class="scroll"><table>
-      <tr><th>Country</th><th class="num">Installs</th><th class="num">Active 7 days</th><th class="num">Today</th><th class="num">Pro</th><th></th></tr>
+      <tr><th>Country</th><th class="num">Installs</th><th class="num">Active 7 days</th><th class="num">Today</th><th class="num">Pro</th>${colHead(countryCols)}<th></th></tr>
       ${countries
         .map((c) => `<tr><td>${flag(c.country)} ${esc(countryName(c.country))}</td><td class="num">${c.month}</td><td class="num">${c.week}</td>
-          <td class="num">${c.today}</td><td class="num">${c.pro}</td><td style="width:35%"><span class="track"><i style="width:${Math.round((c.month / Math.max(1, countries[0]?.month ?? 1)) * 100)}%"></i></span></td></tr>`)
-        .join("") || `<tr><td colspan="6" class="muted">No countries yet: deskMonk 0.4 and later report them.</td></tr>`}
+          <td class="num">${c.today}</td><td class="num">${c.pro}</td>${colCells(countryCols, countryDevices.filter((r) => r.country === c.country))}<td style="width:20%"><span class="track"><i style="width:${Math.round((c.month / Math.max(1, countries[0]?.month ?? 1)) * 100)}%"></i></span></td></tr>`)
+        .join("") || `<tr><td colspan="${6 + countryCols.length}" class="muted">No countries yet: deskMonk 0.4 and later report them.</td></tr>`}
     </table></div>
   </section>
 
@@ -504,28 +521,38 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
     </div>
     <p class="label" style="margin-top:20px">What scans find</p>
     ${hbars([["Duplicates", space[0]?.dup ?? 0], ["Junk files", space[0]?.junk ?? 0], ["Old downloads", space[0]?.old ?? 0], ["Large files", space[0]?.large ?? 0]])}
+    <p class="label" style="margin-top:20px">By device</p>
+    <div class="scroll"><table>
+      <tr><th>Platform</th><th class="num">Scans</th><th class="num">Found</th><th class="num">Freed</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Junk</th><th class="num">Old downloads</th><th class="num">Large</th></tr>
+      ${[...OSES, ...mobileKeys(spaceDevices)]
+        .map((k) => `<tr><td>${platformName(k)}</td><td class="num">${devicesOf(k, spaceDevices, "scans")}</td><td class="num">${humanSize(devicesOf(k, spaceDevices, "found"))}</td>
+          <td class="num">${humanSize(devicesOf(k, spaceDevices, "cleaned"))}</td><td class="num">${devicesOf(k, spaceDevices, "files")}</td>
+          ${["dup", "junk", "old", "large"].map((f) => `<td class="num">${humanSize(devicesOf(k, spaceDevices, f))}</td>`).join("")}</tr>`)
+        .join("")}
+    </table></div>
   </section>
 
   <section class="card">
     <p class="label">Hardware brands (latest known)</p>
     <div class="scroll"><table>
-      <tr><th>Part</th><th>Brand</th><th class="num">Installs</th></tr>
-      ${brands.map((b) => `<tr><td>${esc(KIND_LABEL[b.kind] ?? b.kind)}</td><td>${esc(b.brand)}</td><td class="num">${b.n}</td></tr>`).join("") ||
-        `<tr><td colspan="3" class="muted">No hardware reported yet.</td></tr>`}
+      <tr><th>Part</th><th>Brand</th><th class="num">Installs</th>${colHead(brandCols)}</tr>
+      ${brandRows.map((b) => `<tr><td>${esc(KIND_LABEL[b.kind] ?? b.kind)}</td><td>${esc(b.brand)}</td><td class="num">${b.n}</td>${colCells(brandCols, b.rows)}</tr>`).join("") ||
+        `<tr><td colspan="${3 + brandCols.length}" class="muted">No hardware reported yet.</td></tr>`}
     </table></div>
   </section>
 
   <details class="card">
     <summary>Day by day, last 30 days</summary>
     <div class="body scroll"><table>
-      <tr><th>Day</th><th class="num">New</th><th class="num">Active</th><th class="num">Scans</th><th class="num">Cleans</th><th class="num">Freed</th>
+      <tr><th>Day</th><th class="num">New</th><th class="num">Active</th>${colHead(dailyCols)}<th class="num">Scans</th><th class="num">Cleans</th><th class="num">Freed</th>
         <th class="num">Vault</th><th class="num">Focus</th><th class="num">Pro dialog</th></tr>
       ${daily
-        .map((d) => `<tr><td>${d.d}</td><td class="num">${seriesMap[d.d] ?? 0}</td><td class="num">${d.active}</td><td class="num">${d.scans}</td>
+        .map((d) => `<tr><td>${d.d}</td><td class="num">${seriesMap[d.d] ?? 0}</td><td class="num">${d.active}</td>${colCells(dailyCols, dailyDevices.filter((r) => r.d === d.d))}<td class="num">${d.scans}</td>
           <td class="num">${d.cleans}</td><td class="num">${humanSize(d.freed)}</td><td class="num">${d.vault}</td><td class="num">${d.focus}</td>
           <td class="num">${d.pro_views}</td></tr>`)
-        .join("") || `<tr><td colspan="9" class="muted">Nothing this month.</td></tr>`}
+        .join("") || `<tr><td colspan="${9 + dailyCols.length}" class="muted">Nothing this month.</td></tr>`}
     </table></div>
+    <p class="muted foot">Desktop and device columns count active users.</p>
   </details>
   </div>
 
@@ -570,8 +597,8 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
       ${stat("Monthly recurring", usd(mrr), `${monthly} × ${usd(PRICE.monthly)} + ${yearly} × ${usd(PRICE.yearly)}/12`)}
       ${stat("Yearly run rate", usd(mrr * 12), "MRR × 12")}
       ${stat("Live subscriptions", String(livePaddle.length), `${paddleSubs.filter((s) => s.status === "canceled").length} canceled all time`)}
-      ${stat("App Store Pro installs", String(appstorePro), "Apple pays out; see App Store Connect")}
-      ${stat("Google Play Pro installs", String(playstorePro), "Google pays out; see Play Console")}
+      ${stat("App Store Pro installs", String(appstorePro), `${storeLine("ios")}. Apple pays out; see App Store Connect`)}
+      ${stat("Google Play Pro installs", String(playstorePro), `${storeLine("android")}. Google pays out; see Play Console`)}
     </div>
     <p class="label" style="margin-top:20px">By month</p>
     <div class="scroll"><table>
@@ -615,16 +642,16 @@ async function dashboard(env: Env, query: string, notice: Notice): Promise<strin
 }
 
 function merge(rows: Row[]): Row {
-  return ["n", "users", "week", "today"].reduce((acc, k) => ({ ...acc, [k]: rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) }), {} as Row);
+  return ["n", "users", "week", "today", "bytes"].reduce((acc, k) => ({ ...acc, [k]: rows.reduce((a, r) => a + (Number(r[k]) || 0), 0) }), {} as Row);
 }
 
 /** Each installation once, at its current version. `selfUpdates`: desktop only; the stores update the phone apps. */
 function versionTable(versions: Row[], oses: string[], selfUpdates = false): string {
-  const rows = versions.filter((r) => oses.includes(r.os));
-  const n = (v: string, os?: string) => rows.filter((r) => r.version === v && (!os || r.os === os)).reduce((a, r) => a + r.n, 0);
+  const rows = versions.filter((r) => oses.includes(platform(r)));
+  const n = (v: string, os?: string) => rows.filter((r) => r.version === v && (!os || platform(r) === os)).reduce((a, r) => a + r.n, 0);
   const all = Math.max(1, rows.reduce((a, r) => a + r.n, 0));
   return `<div class="scroll"><table>
-      <tr><th>Version</th>${oses.map((os) => `<th class="num">${osName(os)}</th>`).join("")}<th class="num">Total</th><th class="num">Share</th>${selfUpdates ? "<th>Updates itself</th>" : ""}</tr>
+      <tr><th>Version</th>${oses.map((os) => `<th class="num">${platformName(os)}</th>`).join("")}<th class="num">Total</th><th class="num">Share</th>${selfUpdates ? "<th>Updates itself</th>" : ""}</tr>
       ${[...new Set(rows.map((r) => r.version))].sort(compareVersions)
         .map((v, i) => {
           // The self-updater came with 0.5.0; older copies only update by a manual download.
@@ -657,6 +684,57 @@ function deviceCell(r: Row): string {
   return `${osIcon(r.os)} ${esc(deviceName(r.os, r.type))}`;
 }
 
+const DEVICE_KEYS = DEVICES.map(([os, type]) => `${os}:${type}`);
+
+/** Where a row of counts belongs: a desktop OS as it is, a phone or tablet as "os:type", with the type empty when not reported. */
+function platform(r: Row): string {
+  if (!MOBILE.includes(r.os)) return r.os;
+  return `${r.os}:${DEVICE_KEYS.includes(`${r.os}:${r.type}`) ? r.type : ""}`;
+}
+
+function platformName(key: string): string {
+  const [os, type] = key.split(":");
+  return type === undefined ? osName(os) : deviceName(os, type);
+}
+
+/** The four devices, even at zero, then whichever mobile rows haven't said which they are. */
+function mobileKeys(rows: Row[]): string[] {
+  const unknown = rows.filter((r) => MOBILE.includes(r.os)).map(platform).filter((k) => !DEVICE_KEYS.includes(k));
+  return [...DEVICE_KEYS, ...new Set(unknown)];
+}
+
+function byPlatform(rows: Row[], f: string): Record<string, number> {
+  return rows.reduce((acc, r) => ({ ...acc, [platform(r)]: (acc[platform(r)] ?? 0) + (Number(r[f]) || 0) }), {});
+}
+
+/** Table columns split by device: all desktops as one, then each mobile device. */
+function deviceCols(rows: Row[]): string[] {
+  return ["desktop", ...mobileKeys(rows)];
+}
+
+function colHead(cols: string[]): string {
+  return cols.map((k) => `<th class="num">${k === "desktop" ? "Desktop" : platformName(k)}</th>`).join("");
+}
+
+function colCells(cols: string[], rows: Row[], f = "n"): string {
+  return cols
+    .map((k) => {
+      const n = rows.filter((r) => (MOBILE.includes(r.os) ? platform(r) : "desktop") === k).reduce((a, r) => a + (Number(r[f]) || 0), 0);
+      return `<td class="num">${n || '<span class="muted">0</span>'}</td>`;
+    })
+    .join("");
+}
+
+/** Store purchases or Pro installs for bars3, by device; the Mac App Store shows only when it has any. */
+function storeBars(rows: Row[], f: string): [string, number, string][] {
+  const count = rows.reduce((acc, r) => ({ ...acc, [platform(r)]: (acc[platform(r)] ?? 0) + (Number(r[f]) || 0) }), {} as Record<string, number>);
+  const mac = Object.entries(count).filter(([k]) => !k.includes(":")).reduce((a, [, n]) => a + n, 0);
+  return [
+    ...mobileKeys(rows).map((k): [string, number, string] => [platformName(k), count[k] ?? 0, k.startsWith("ios") ? "store" : "play"]),
+    ...(mac ? [["Mac App Store", mac, "store"] as [string, number, string]] : []),
+  ];
+}
+
 async function mobileLiveData(db: D1Database, t: number): Promise<MobileNow> {
   const today = Math.floor((t + TZ) / DAY) * DAY - TZ;
   const [counts, recent, devices] = (
@@ -667,12 +745,10 @@ async function mobileLiveData(db: D1Database, t: number): Promise<MobileNow> {
       db.prepare(`WITH ${MO} SELECT install_id AS id, os, country, version, plan, MAX(ts) AS last_seen,
                     (SELECT x.kind FROM events x WHERE x.install_id = mo.install_id AND x.kind != 'ping' ORDER BY x.ts DESC LIMIT 1) AS action,
                     (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
-                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone,
-                    (SELECT json_extract(s.value, '$.name') FROM hardware h, json_each(h.specs) s
-                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Tür' LIMIT 1) AS type
+                      WHERE h.install_id = mo.install_id AND json_extract(s.value, '$.kind') = 'Telefon' LIMIT 1) AS phone, type
                   FROM mo GROUP BY install_id ORDER BY last_seen DESC LIMIT 15`),
-      db.prepare(`WITH ${MO}, ${MO_F}, ${MO_T} SELECT f.os, t.type, SUM(last >= ?1) AS live, SUM(last >= ?2) AS hour, SUM(last >= ?3) AS today,
-                    SUM(last >= ?4) AS week, SUM(last >= ?5) AS month FROM f LEFT JOIN t ON t.install_id = f.install_id GROUP BY 1, 2`).bind(t - LIVE, t - 3600, today, t - 7 * DAY, t - 30 * DAY),
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT os, type, SUM(last >= ?1) AS live, SUM(last >= ?2) AS hour, SUM(last >= ?3) AS today,
+                    SUM(last >= ?4) AS week, SUM(last >= ?5) AS month FROM f GROUP BY 1, 2`).bind(t - LIVE, t - 3600, today, t - 7 * DAY, t - 30 * DAY),
     ])
   ).map((r) => (r.results ?? []) as Row[]);
   return { counts, recent, devices };
@@ -687,33 +763,33 @@ async function mobileData(db: D1Database, t: number): Promise<MobileData> {
   const seen = (kind: string) => `COUNT(DISTINCT CASE WHEN kind = '${kind}' THEN install_id END)`;
   const [lifecycle, usage, features, active, fresh, phones, countries, devices] = (
     await db.batch([
-      db.prepare(`WITH ${MO}, ${MO_F} SELECT os, COUNT(*) AS total, SUM(first >= ?1) AS new_today, SUM(first >= ?2 AND first < ?1) AS new_yesterday,
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT os, type, COUNT(*) AS total, SUM(first >= ?1) AS new_today, SUM(first >= ?2 AND first < ?1) AS new_yesterday,
                     SUM(last >= ?1) AS today, SUM(last >= ?4) AS month,
                     ${back("day", DAY, t - DAY)}, ${back("week", 7 * DAY, t - 7 * DAY)}, ${back("month", 30 * DAY, month)},
                     SUM(last >= ?4 AND last < ?3) AS dormant, SUM(last < ?4) AS gone
-                  FROM f GROUP BY os`).bind(today, today - DAY, t - 7 * DAY, month),
+                  FROM f GROUP BY os, type`).bind(today, today - DAY, t - 7 * DAY, month),
       // Pro is each installation's latest plan. Everyone sends a basic open; anything else means they allowed the full stats.
-      db.prepare(`WITH ${MO}, last AS (SELECT install_id, os, plan, MAX(ts) FROM mo WHERE ts >= ?1 AND plan IS NOT NULL GROUP BY install_id)
-                  SELECT os, COUNT(DISTINCT install_id) AS active,
+      db.prepare(`WITH ${MO}, last AS (SELECT install_id, os, type, plan, MAX(ts) FROM mo WHERE ts >= ?1 AND plan IS NOT NULL GROUP BY install_id)
+                  SELECT os, type, COUNT(DISTINCT install_id) AS active,
                     COUNT(DISTINCT CASE WHEN kind != 'open' OR COALESCE(detail, '') != 'basic' THEN install_id END) AS allowed,
                     ${seen("scan")} AS scanned, ${seen("clean")} AS cleaned, ${seen("pro")} AS saw_pro, ${seen("bought")} AS bought,
-                    (SELECT COUNT(*) FROM last WHERE last.os = mo.os AND last.plan = 'pro') AS pro
-                  FROM mo WHERE ts >= ?1 GROUP BY os`).bind(month),
-      db.prepare(`WITH ${MO} SELECT os, kind, COALESCE(detail, '') AS detail, COUNT(*) AS n, COUNT(DISTINCT install_id) AS users, SUM(bytes) AS bytes
-                  FROM mo WHERE ts >= ?1 AND kind != 'ping' GROUP BY 1, 2, 3`).bind(month),
-      db.prepare(`WITH ${MO} SELECT ${day("ts")} AS d, os, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1, 2`).bind(today - 29 * DAY),
-      db.prepare(`WITH ${MO}, ${MO_F} SELECT ${day("first")} AS d, os, COUNT(*) AS n FROM f WHERE first >= ?1 GROUP BY 1, 2`).bind(today - 29 * DAY),
+                    (SELECT COUNT(*) FROM last WHERE last.os = mo.os AND last.type IS mo.type AND last.plan = 'pro') AS pro
+                  FROM mo WHERE ts >= ?1 GROUP BY os, type`).bind(month),
+      db.prepare(`WITH ${MO} SELECT os, type, kind, COALESCE(detail, '') AS detail, COUNT(*) AS n, COUNT(DISTINCT install_id) AS users, SUM(bytes) AS bytes
+                  FROM mo WHERE ts >= ?1 AND kind != 'ping' GROUP BY 1, 2, 3, 4`).bind(month),
+      db.prepare(`WITH ${MO} SELECT ${day("ts")} AS d, os, type, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1, 2, 3`).bind(today - 29 * DAY),
+      db.prepare(`WITH ${MO}, ${MO_F} SELECT ${day("first")} AS d, os, type, COUNT(*) AS n FROM f WHERE first >= ?1 GROUP BY 1, 2, 3`).bind(today - 29 * DAY),
       db.prepare(`WITH ${MO} SELECT json_extract(s.value, '$.name') AS name, COUNT(DISTINCT h.install_id) AS n FROM hardware h, json_each(h.specs) s
                   WHERE json_extract(s.value, '$.kind') = 'Telefon' AND h.install_id IN (SELECT install_id FROM mo) GROUP BY 1 ORDER BY n DESC LIMIT 8`),
       db.prepare(`WITH ${MO} SELECT COALESCE(country, '?') AS country, COUNT(DISTINCT install_id) AS n FROM mo WHERE ts >= ?1 GROUP BY 1 ORDER BY n DESC LIMIT 8`).bind(month),
       // The four devices side by side. Usage is the last 30 days; Pro is each installation's latest plan.
-      db.prepare(`WITH ${MO}, ${MO_F}, ${MO_T},
+      db.prepare(`WITH ${MO}, ${MO_F},
                     p AS (SELECT install_id, plan, MAX(ts) FROM mo WHERE plan IS NOT NULL GROUP BY install_id),
                     u AS (SELECT install_id, MAX(kind = 'scan') AS scanned, MAX(kind = 'clean') AS cleaned, MAX(kind = 'vault') AS vaulted, MAX(kind = 'focus') AS focused, MAX(kind = 'bought') AS bought
                       FROM mo WHERE ts >= ?1 GROUP BY install_id)
-                  SELECT f.os, t.type, COUNT(*) AS total, SUM(first >= ?2) AS new_today, SUM(last >= ?1) AS active, SUM(p.plan = 'pro') AS pro,
+                  SELECT f.os, f.type, COUNT(*) AS total, SUM(first >= ?2) AS new_today, SUM(last >= ?1) AS active, SUM(p.plan = 'pro') AS pro,
                     SUM(u.scanned) AS scanned, SUM(u.cleaned) AS cleaned, SUM(u.vaulted) AS vaulted, SUM(u.focused) AS focused, SUM(u.bought) AS bought
-                  FROM f LEFT JOIN t ON t.install_id = f.install_id LEFT JOIN p ON p.install_id = f.install_id LEFT JOIN u ON u.install_id = f.install_id GROUP BY 1, 2`).bind(month, today),
+                  FROM f LEFT JOIN p ON p.install_id = f.install_id LEFT JOIN u ON u.install_id = f.install_id GROUP BY 1, 2`).bind(month, today),
     ])
   ).map((r) => (r.results ?? []) as Row[]);
   return { lifecycle, usage, features, active, fresh, phones, countries, devices };
@@ -732,10 +808,9 @@ function liveness(last: number, t: number): [string, string] {
 
 /** Who is on the app right now and who was lately. The page refetches this part every 30 seconds. */
 export function mobileLive({ counts, recent, devices }: MobileNow, t: number): string {
-  const n = (f: string) => Object.fromEntries(counts.map((r) => [r.os, Number(r[f]) || 0]));
   const total = (f: string) => counts.reduce((a, r) => a + (Number(r[f]) || 0), 0);
   const box = (f: string, icon: string, tone: string, title: string, hint: string, cls = "") =>
-    tile({ icon, tone, title, hint, cls, value: total(f), rows: osBars(n(f), String, MOBILE) });
+    tile({ icon, tone, title, hint, cls, value: total(f), rows: osBars(byPlatform(devices, f), String, DEVICE_KEYS) });
   const clock = new Date((t + TZ) * 1000).toISOString().slice(11, 16);
   return `<section class="card" id="mobile-live">
     <p class="label"><span class="dot live"></span>Phone and tablet users, live <span class="aside">· iOS and Android · updated ${clock} Turkey time, refreshes by itself</span></p>
@@ -769,32 +844,37 @@ export function mobileLive({ counts, recent, devices }: MobileNow, t: number): s
   </section>`;
 }
 
-/** Bars per day, iOS and Android stacked. */
+/** Bars per day, the mobile devices stacked. */
 function dayStack(rows: Row[], days: string[]): string {
-  const n = (d: string, os: string) => Number(rows.find((r) => r.d === d && r.os === os)?.n) || 0;
-  const peak = Math.max(1, ...days.map((d) => n(d, "ios") + n(d, "android")));
+  const keys = mobileKeys(rows);
+  const n = (d: string, k: string) => rows.filter((r) => r.d === d && platform(r) === k).reduce((a, r) => a + (Number(r.n) || 0), 0);
+  const peak = Math.max(1, ...days.map((d) => keys.reduce((a, k) => a + n(d, k), 0)));
   return `<div class="stack">${days
-    .map((d) => `<span title="${d}: iOS ${n(d, "ios")}, Android ${n(d, "android")}">${MOBILE.map((os) => `<i class="${os}" style="height:${Math.round((n(d, os) / peak) * 100)}%"></i>`).join("")}</span>`)
+    .map((d) => `<span title="${d}: ${keys.map((k) => `${platformName(k)} ${n(d, k)}`).join(", ")}">${keys.map((k) => `<i class="${k.replace(":", "-")}" style="height:${Math.round((n(d, k) / peak) * 100)}%"></i>`).join("")}</span>`)
     .join("")}</div><div class="bars-axis"><span>${days.length} days ago</span><span>today</span></div>`;
 }
 
+const STACK_LEGEND = `<span class="legend">${DEVICE_KEYS.map((k) => `<span><i class="${k.replace(":", "-")}"></i>${platformName(k)}</span>`).join("")}</span>`;
+
 /** What the phones do with the app: growth, retention, what they use and what leads to Pro. */
 export function mobileCard(m: MobileData, versions: Row[], t: number): string {
-  const rows: Row[] = [...MOBILE, "all"].map((os) => {
+  const keys = mobileKeys([...m.usage, ...m.lifecycle]);
+  const rows: Row[] = [...keys, "all"].map((key) => {
     const merged = (list: Row[]) =>
-      os === "all" ? list.reduce((acc, r) => Object.fromEntries(Object.keys(r).map((k) => [k, (Number(acc[k]) || 0) + (Number(r[k]) || 0)])), {} as Row) : (list.find((r) => r.os === os) ?? {});
-    return { ...merged(m.usage), ...merged(m.lifecycle), os };
+      list.filter((r) => key === "all" || platform(r) === key).reduce((acc, r) => Object.fromEntries(Object.keys(r).map((k) => [k, (Number(acc[k]) || 0) + (Number(r[k]) || 0)])), {} as Row);
+    return { ...merged(m.usage), ...merged(m.lifecycle), key };
   });
-  const all = rows[2];
+  const all = rows[rows.length - 1];
   const num = (v: unknown) => `<td class="num">${v ?? 0}</td>`;
+  const keyHead = keys.map((k) => `<th class="num">${platformName(k)}</th>`).join("");
   const today = Math.floor((t + TZ) / DAY) * DAY;
   const days = [...Array(30)].map((_, i) => date(today - (29 - i) * DAY));
-  const uses = (kind: string, os: string, detail?: string) => m.features.filter((f) => f.kind === kind && f.os === os && (detail === undefined || f.detail === detail));
+  const uses = (kind: string, detail?: string) => m.features.filter((f) => f.kind === kind && (detail === undefined || f.detail === detail));
   const sum = (list: Row[], f: string) => list.reduce((a, r) => a + (Number(r[f]) || 0), 0);
   const freed = sum(m.features.filter((f) => f.kind === "clean"), "bytes");
   const feature = (label: string, kind: string, detail?: string) => {
-    const [ios, android] = MOBILE.map((os) => uses(kind, os, detail));
-    return `<tr><td>${label}</td>${num(sum(ios, "n"))}${num(sum(android, "n"))}${num(sum(ios, "n") + sum(android, "n"))}</tr>`;
+    const list = uses(kind, detail);
+    return `<tr><td>${label}</td>${keys.map((k) => num(sum(list.filter((f) => platform(f) === k), "n"))).join("")}${num(sum(list, "n"))}</tr>`;
   };
   const funnel = [["Used the app and allowed stats", "allowed"], ["Scanned", "scanned"], ["Cleaned", "cleaned"], ["Looked at Pro", "saw_pro"], ["Bought Pro", "bought"]];
   const sources = Object.entries(
@@ -811,14 +891,14 @@ export function mobileCard(m: MobileData, versions: Row[], t: number): string {
       ${stat("Allowed stats", all.active ? `${Math.round(((all.allowed ?? 0) / all.active) * 100)}%` : "—", "The rest count only when the app starts")}
     </div>
     <div class="two">
-      <div><p class="label">Active users per day <span class="legend"><span><i class="ios"></i>iOS</span><span><i class="android"></i>Android</span></span></p>${dayStack(m.active, days)}</div>
-      <div><p class="label">New installs per day <span class="legend"><span><i class="ios"></i>iOS</span><span><i class="android"></i>Android</span></span></p>${dayStack(m.fresh, days)}</div>
+      <div><p class="label">Active users per day ${STACK_LEGEND}</p>${dayStack(m.active, days)}</div>
+      <div><p class="label">New installs per day ${STACK_LEGEND}</p>${dayStack(m.fresh, days)}</div>
     </div>
-    <p class="label" style="margin-top:22px">Liveness by platform <span class="aside">· all time</span></p>
+    <p class="label" style="margin-top:22px">Liveness by device <span class="aside">· all time</span></p>
     <div class="scroll"><table>
-      <tr><th>Platform</th><th class="num">Installs</th><th>Came back next day</th><th>Still using after a week</th><th>After a month</th><th class="num">Dormant</th><th class="num">Gone</th></tr>
+      <tr><th>Device</th><th class="num">Installs</th><th>Came back next day</th><th>Still using after a week</th><th>After a month</th><th class="num">Dormant</th><th class="num">Gone</th></tr>
       ${rows
-        .map((r) => `<tr${r.os === "all" ? ' class="total"' : ""}><td>${r.os === "all" ? "" : osIcon(r.os)} ${osName(r.os)}</td>${num(r.total)}
+        .map((r) => `<tr${r.key === "all" ? ' class="total"' : ""}><td>${r.key === "all" ? "" : osIcon(r.key.split(":")[0])} ${platformName(r.key)}</td>${num(r.total)}
           <td>${ratio(r.day_back ?? 0, r.day_base ?? 0)}</td><td>${ratio(r.week_back ?? 0, r.week_base ?? 0)}</td><td>${ratio(r.month_back ?? 0, r.month_base ?? 0)}</td>${num(r.dormant)}${num(r.gone)}</tr>`)
         .join("")}
     </table></div>
@@ -833,13 +913,13 @@ export function mobileCard(m: MobileData, versions: Row[], t: number): string {
     <p class="muted foot">The type comes from users who allowed the stats. The others appear as "type not reported".</p>
     <div class="two">
       <div><p class="label">From first use to Pro</p><div class="scroll"><table>
-        <tr><th>Step</th><th class="num">iOS</th><th class="num">Android</th><th class="num">Total</th><th>Of previous step</th></tr>
+        <tr><th>Step</th>${keyHead}<th class="num">Total</th><th>Of previous step</th></tr>
         ${funnel
-          .map(([label, k], i) => `<tr><td>${label}</td>${num(rows[0][k])}${num(rows[1][k])}${num(all[k])}<td>${i ? ratio(all[k] ?? 0, all[funnel[i - 1][1]] ?? 0) : ""}</td></tr>`)
+          .map(([label, k], i) => `<tr><td>${label}</td>${rows.slice(0, -1).map((r) => num(r[k])).join("")}${num(all[k])}<td>${i ? ratio(all[k] ?? 0, all[funnel[i - 1][1]] ?? 0) : ""}</td></tr>`)
           .join("")}
       </table></div></div>
       <div><p class="label">Features</p><div class="scroll"><table>
-        <tr><th>Feature</th><th class="num">iOS</th><th class="num">Android</th><th class="num">Total</th></tr>
+        <tr><th>Feature</th>${keyHead}<th class="num">Total</th></tr>
         ${feature("App opened", "open")}${feature("Scan", "scan")}${feature("Clean", "clean")}${feature("Vault: encrypt", "vault", "encrypt")}${feature("Vault: open", "vault", "open")}
         ${feature("Focus finished", "focus")}${feature("App lock: app locked", "applock", "lock")}${feature("Pro sheet", "pro")}${feature("Purchase", "bought")}
       </table></div></div>
@@ -850,7 +930,7 @@ export function mobileCard(m: MobileData, versions: Row[], t: number): string {
       <div><p class="label">Countries</p>${m.countries.length ? hbars(m.countries.map((c) => [`${flag(c.country)} ${esc(countryName(c.country))}`, c.n]), String) : '<p class="muted">Nothing yet.</p>'}</div>
     </div>
     <p class="label" style="margin-top:22px">Mobile versions in use</p>
-    ${versionTable(versions, MOBILE)}
+    ${versionTable(versions, mobileKeys(versions))}
     <p class="muted foot">Counted from the apps' own events. Money and refunds are in App Store Connect and Google Play Console.</p>
   </section>`;
 }
@@ -907,7 +987,7 @@ function userRow(u: Row, back: string): string {
   const tags = [u.mine ? `<span class="badge you">you</span>` : "", STORE_NAME[u.channel] ? `<span class="badge store">${STORE_NAME[u.channel]}</span>` : ""].join(" ");
   return `<tr${u.mine ? ' class="mine"' : ""}><td><a href="/admin/user/${encodeURIComponent(u.id)}"><code>${esc(String(u.id).slice(0, 8))}</code></a> ${tags}</td>
     <td>${u.country ? `${flag(u.country)} ${esc(u.country)}` : '<span class="muted">—</span>'}</td>
-    <td>${osIcon(u.os)} ${esc(u.phone ?? u.cpu ?? osName(u.os))}${u.client && u.client !== "gui" ? ` <span class="muted">(${u.client === "tui" ? "terminal" : esc(u.client)})</span>` : ""}</td>
+    <td>${osIcon(u.os)} ${esc(MOBILE.includes(u.os) ? [deviceName(u.os, u.type), u.phone].filter(Boolean).join(" · ") : (u.cpu ?? osName(u.os)))}${u.client && u.client !== "gui" ? ` <span class="muted">(${u.client === "tui" ? "terminal" : esc(u.client)})</span>` : ""}</td>
     <td>${u.plan === "pro" ? '<span class="badge on">Pro</span>' : u.plan === "free" ? '<span class="badge">Free</span>' : '<span class="muted">—</span>'}</td>
     <td>${esc(u.version ?? "")}</td><td>${date(u.first_seen)}</td><td>${ago(u.last_seen)}</td>
     <td class="num">${u.opens}</td><td class="num">${u.scans}</td><td class="num">${u.cleans}</td><td class="num">${humanSize(u.freed)}</td>
@@ -1046,14 +1126,15 @@ function osIcon(os: string): string {
   return "•";
 }
 
-/** Bars per platform: always macOS, Windows and Linux, zeros included, so every tile reads the same way; others when they have a count. */
-function osBars(counts: Record<string, number>, fmt: (n: number) => string = String, always = OSES): string {
-  const oses = [...always, ...Object.keys(counts).filter((os) => !always.includes(os) && counts[os] > 0)];
-  const total = Math.max(1, oses.reduce((a, os) => a + (counts[os] ?? 0), 0));
-  return `<div class="osbars">${oses
-    .map((os) => {
-      const n = counts[os] ?? 0;
-      return `<div class="osrow os-${[...OSES, ...MOBILE].includes(os) ? os : "other"}${n ? "" : " zero"}"><span class="ic">${osIcon(os)}</span><span class="nm">${osName(os)}</span>
+/** Bars per platform: always macOS, Windows, Linux and the four mobile devices, zeros included, so every tile reads the same way; others when they have a count. */
+function osBars(counts: Record<string, number>, fmt: (n: number) => string = String, always = [...OSES, ...DEVICE_KEYS]): string {
+  const keys = [...always, ...Object.keys(counts).filter((k) => !always.includes(k) && counts[k] > 0)];
+  const total = Math.max(1, keys.reduce((a, k) => a + (counts[k] ?? 0), 0));
+  return `<div class="osbars">${keys
+    .map((key) => {
+      const n = counts[key] ?? 0;
+      const os = key.split(":")[0];
+      return `<div class="osrow os-${[...OSES, ...MOBILE].includes(os) ? os : "other"}${n ? "" : " zero"}"><span class="ic">${osIcon(os)}</span><span class="nm">${platformName(key)}</span>
         <b>${fmt(n)}</b><span class="track"><i style="width:${Math.round((n / total) * 100)}%"></i></span></div>`;
     })
     .join("")}</div>`;
@@ -1251,7 +1332,7 @@ h1.title { font-size: 22px; margin: 4px 0; }
 .label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 0 0 10px; }
 .label .aside { text-transform: none; font-weight: 400; letter-spacing: 0; color: var(--faint); }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.grid.five { grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); }
+.grid.five { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .stat { display: flex; flex-direction: column; background: var(--card-2); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; }
 .stat .head { display: flex; gap: 12px; align-items: flex-start; }
 .stat .k { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.3; }
@@ -1271,7 +1352,7 @@ svg.win { width: 13px; height: 13px; vertical-align: -2px; color: #3b9cff; }
 .t-green { color: #4ade80; background: rgba(74,222,128,.13); } .t-teal { color: #2dd4bf; background: rgba(45,212,191,.13); }
 .t-violet { color: #a78bfa; background: rgba(167,139,250,.15); } .t-orange { color: #fb923c; background: rgba(251,146,60,.14); }
 .osbars { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 7px; display: grid; gap: 3px; }
-.osrow { display: grid; grid-template-columns: 18px 70px minmax(26px, auto) 1fr; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.35; }
+.osrow { display: grid; grid-template-columns: 18px 88px minmax(26px, auto) 1fr; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.35; }
 .osrow .nm { color: var(--muted); } .osrow b { font-variant-numeric: tabular-nums; } .osrow.zero b { color: var(--faint); font-weight: 500; }
 .osrow .ic { display: inline-flex; justify-content: center; font-size: 14px; line-height: 1; }
 .osrow .ic svg { width: 15px; height: 15px; }
@@ -1293,7 +1374,8 @@ svg.win { width: 13px; height: 13px; vertical-align: -2px; color: #3b9cff; }
 .bars div:last-child { opacity: 1; }
 .stack { display: flex; align-items: stretch; gap: 3px; height: 90px; margin-top: 12px; }
 .stack > span { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; min-width: 0; border-bottom: 2px solid var(--border); }
-.stack i, .legend i { display: block; border-radius: 2px; } .stack i.ios, .legend i.ios { background: #ec4899; } .stack i.android, .legend i.android { background: #22c55e; }
+.stack i, .legend i { display: block; border-radius: 2px; } .stack i.ios-Phone, .legend i.ios-Phone { background: #ec4899; } .stack i.ios-Tablet, .legend i.ios-Tablet { background: #f9a8d4; }
+.stack i.android-Phone, .legend i.android-Phone { background: #22c55e; } .stack i.android-Tablet, .legend i.android-Tablet { background: #86efac; } .stack i.ios-, .stack i.android- { background: var(--muted); }
 .stack > span:hover { background: var(--card-2); }
 .legend { display: inline-flex; gap: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; }

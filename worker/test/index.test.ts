@@ -66,14 +66,14 @@ test("mobile card: platforms add up, and no desktop numbers", () => {
   const t = 1_800_000_000;
   const html = mobileCard(
     {
-      lifecycle: [{ os: "ios", total: 7, new_today: 2, new_yesterday: 1, today: 2, month: 4, day_base: 4, day_back: 3, week_base: 2, week_back: 1, month_base: 0, month_back: 0, dormant: 1, gone: 2 },
-        { os: "android", total: 3, new_today: 1, new_yesterday: 0, today: 1, month: 2, day_base: 2, day_back: 1, week_base: 0, week_back: 0, month_base: 0, month_back: 0, dormant: 0, gone: 1 }],
-      usage: [{ os: "ios", active: 4, allowed: 4, scanned: 3, cleaned: 2, saw_pro: 2, bought: 1, pro: 1 }, { os: "android", active: 2, allowed: 1, scanned: 1, cleaned: 1, saw_pro: 0, bought: 0, pro: 0 }],
+      lifecycle: [{ os: "ios", type: "Phone", total: 7, new_today: 2, new_yesterday: 1, today: 2, month: 4, day_base: 4, day_back: 3, week_base: 2, week_back: 1, month_base: 0, month_back: 0, dormant: 1, gone: 2 },
+        { os: "android", type: "Phone", total: 3, new_today: 1, new_yesterday: 0, today: 1, month: 2, day_base: 2, day_back: 1, week_base: 0, week_back: 0, month_base: 0, month_back: 0, dormant: 0, gone: 1 }],
+      usage: [{ os: "ios", type: "Phone", active: 4, allowed: 4, scanned: 3, cleaned: 2, saw_pro: 2, bought: 1, pro: 1 }, { os: "android", type: "Phone", active: 2, allowed: 1, scanned: 1, cleaned: 1, saw_pro: 0, bought: 0, pro: 0 }],
       features: [{ os: "ios", kind: "clean", detail: "", n: 5, users: 2, bytes: 2048 }, { os: "ios", kind: "pro", detail: "topbar", n: 2, users: 2, bytes: 0 }, { os: "android", kind: "pro", detail: "clean_limit", n: 9, users: 1, bytes: 0 }],
       active: [], fresh: [], phones: [{ name: "Pixel <9>", n: 2 }], countries: [{ country: "TR", n: 3 }],
       devices: [{ os: "android", type: "Tablet", total: 21, new_today: 22, active: 23, pro: 24, scanned: 25, cleaned: 26, vaulted: 27, focused: 28, bought: 29 }, { os: "ios", type: "Phone", total: 4 }],
     },
-    [{ version: "1.1.0", os: "ios", n: 5 }, { version: "1.0.0", os: "android", n: 2 }, { version: "0.3.0", os: "macos", n: 800 }],
+    [{ version: "1.1.0", os: "ios", type: "Tablet", n: 5 }, { version: "1.0.0", os: "android", n: 2 }, { version: "0.3.0", os: "macos", n: 800 }],
     t,
   );
   expect(html).toContain("2.0 KB");
@@ -85,7 +85,10 @@ test("mobile card: platforms add up, and no desktop numbers", () => {
   // Stickiness: 3 active today of 6 this month, across both platforms.
   expect(html).toContain('<div class="v">50%</div>');
   // The funnel's total adds both platforms; each step is measured against the one before.
-  expect(html).toMatch(/Scanned<\/td><td class="num">3<\/td><td class="num">1<\/td><td class="num">4<\/td><td>80%/);
+  expect(html).toMatch(/Scanned<\/td><td class="num">3<\/td><td class="num">0<\/td><td class="num">1<\/td><td class="num">0<\/td><td class="num">4<\/td><td>80%/);
+  // Versions split by device too, and an install that didn't say which it is keeps its own column.
+  expect(html).toMatch(/1\.1\.0[\s\S]*?<td class="num"><span class="muted">0<\/span><\/td><td class="num">5<\/td>/);
+  expect(html).toContain("Android, type not reported");
   // Most-used source first.
   expect(html.indexOf("Daily clean limit")).toBeLessThan(html.indexOf("Top bar button"));
 });
