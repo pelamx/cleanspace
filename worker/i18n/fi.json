@@ -103,7 +103,7 @@
  "price.note": "Hinnat Yhdysvaltain dollareina; Paddle näyttää paikallisen valuuttasi ja mahdolliset verot ennen maksua.",
  "dl.eyebrow": "Lataa",
  "dl.title": "Hanki deskMonk ilmaiseksi",
- "dl.mac": "Apple Silicon ja Intel, macOS 10.13 tai uudempi. Jos macOS estää ensimmäisen käynnistyksen, avaa System Settings → Privacy &amp; Security → Open Anyway.",
+ "dl.mac": "Apple Silicon ja Intel, macOS 10.13 tai uudempi.",
  "dl.get": "Lataa",
  "dl.win": "Windows 10 ja 11, 64-bittinen. Pura ja käynnistä. Jos SmartScreen varoittaa uudesta sovelluksesta, valitse Lisätietoja → Suorita silti.",
  "dl.linux": "AppImage ja tar.gz x86_64:lle ja ARMille sekä <code>deskmonk-tui</code>, päätteessä toimiva versio palvelimille, joilla ei ole työpöytää.",

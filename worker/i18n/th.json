@@ -103,7 +103,7 @@
  "price.note": "ราคาเป็นดอลลาร์สหรัฐ Paddle จะแสดงสกุลเงินท้องถิ่นและภาษีที่เกี่ยวข้องก่อนคุณชำระเงิน",
  "dl.eyebrow": "ดาวน์โหลด",
  "dl.title": "รับ deskMonk ฟรี",
- "dl.mac": "Apple Silicon และ Intel, macOS 10.13 ขึ้นไป หาก macOS บล็อกการเปิดครั้งแรก ให้ไปที่ System Settings → Privacy &amp; Security → Open Anyway",
+ "dl.mac": "Apple Silicon และ Intel, macOS 10.13 ขึ้นไป",
  "dl.get": "ดาวน์โหลด",
  "dl.win": "Windows 10 และ 11 แบบ 64 บิต แตกไฟล์แล้วเรียกใช้ หาก SmartScreen เตือนเกี่ยวกับแอปใหม่ ให้เลือก More info → Run anyway",
  "dl.linux": "AppImage และ tar.gz สำหรับ x86_64 และ ARM รวมถึง <code>deskmonk-tui</code> เวอร์ชันเทอร์มินัลสำหรับเซิร์ฟเวอร์ที่ไม่มีเดสก์ท็อป",

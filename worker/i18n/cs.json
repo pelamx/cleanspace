@@ -103,7 +103,7 @@
  "price.note": "Ceny v USD; Paddle vám před platbou ukáže částku ve vaší měně a případnou daň.",
  "dl.eyebrow": "Stažení",
  "dl.title": "Stáhněte si deskMonk zdarma",
- "dl.mac": "Apple Silicon i Intel, macOS 10.13 nebo novější. Pokud macOS první spuštění zablokuje, otevřete Nastavení systému → Soukromí a zabezpečení → Přesto otevřít.",
+ "dl.mac": "Apple Silicon i Intel, macOS 10.13 nebo novější.",
  "dl.get": "Stáhnout",
  "dl.win": "Windows 10 a 11, 64bitové. Rozbalte a spusťte. Pokud SmartScreen upozorní na novou aplikaci, zvolte Další informace → Přesto spustit.",
  "dl.linux": "AppImage a tar.gz pro x86_64 a ARM, navíc <code>deskmonk-tui</code>, terminálová verze pro servery bez grafického prostředí.",

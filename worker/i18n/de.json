@@ -103,7 +103,7 @@
  "price.note": "Preise in USD; Paddle zeigt Ihre Landeswährung und eventuelle Steuern vor dem Bezahlen an.",
  "dl.eyebrow": "Download",
  "dl.title": "deskMonk kostenlos holen",
- "dl.mac": "Apple Silicon und Intel, macOS 10.13 oder neuer. Blockiert macOS den ersten Start, öffnen Sie Systemeinstellungen → Datenschutz &amp; Sicherheit → Dennoch öffnen.",
+ "dl.mac": "Apple Silicon und Intel, macOS 10.13 oder neuer.",
  "dl.get": "Download",
  "dl.win": "Windows 10 und 11, 64 Bit. Entpacken und starten. Warnt SmartScreen vor einer neuen App, wählen Sie Weitere Informationen → Trotzdem ausführen.",
  "dl.linux": "AppImage und tar.gz für x86_64 und ARM, dazu <code>deskmonk-tui</code>, eine Terminalversion für Server ohne Desktop.",

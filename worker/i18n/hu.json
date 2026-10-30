@@ -103,7 +103,7 @@
  "price.note": "Az árak USD-ben értendők; fizetés előtt a Paddle megmutatja az összeget a saját pénznemedben és az esetleges adót.",
  "dl.eyebrow": "Letöltés",
  "dl.title": "Töltsd le a deskMonkot ingyen",
- "dl.mac": "Apple Silicon és Intel, macOS 10.13 vagy újabb. Ha a macOS letiltja az első indítást, nyisd meg ezt: System Settings → Privacy &amp; Security → Open Anyway.",
+ "dl.mac": "Apple Silicon és Intel, macOS 10.13 vagy újabb.",
  "dl.get": "Letöltés",
  "dl.win": "Windows 10 és 11, 64 bites. Csomagold ki és futtasd. Ha a SmartScreen figyelmeztet egy új alkalmazásra, válaszd a További információ → Futtatás mindenképp lehetőséget.",
  "dl.linux": "AppImage és tar.gz x86_64 és ARM rendszerre, valamint <code>deskmonk-tui</code>, egy terminálos változat asztali környezet nélküli szerverekhez.",

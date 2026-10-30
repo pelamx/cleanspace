@@ -103,7 +103,7 @@
  "price.note": "價格以美元計；付款前 Paddle 會顯示你所在地的貨幣金額和稅金。",
  "dl.eyebrow": "下載",
  "dl.title": "免費取得 deskMonk",
- "dl.mac": "支援 Apple 晶片和 Intel，macOS 10.13 或以上版本。如果 macOS 阻擋第一次開啟，請前往「系統設定」→「隱私權與安全性」→「強制打開」。",
+ "dl.mac": "支援 Apple 晶片和 Intel，macOS 10.13 或以上版本。",
  "dl.get": "下載",
  "dl.win": "Windows 10 和 11，64 位元。解壓縮後執行。如果 SmartScreen 對新 App 發出警告，請選擇「其他資訊」→「仍要執行」。",
  "dl.linux": "適用於 x86_64 和 ARM 的 AppImage 與 tar.gz，另有 <code>deskmonk-tui</code>：給沒有桌面環境的伺服器使用的終端機版本。",

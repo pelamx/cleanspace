@@ -103,7 +103,7 @@
  "price.note": "Priser i USD; Paddle viser din lokale valuta og eventuel moms, før du betaler.",
  "dl.eyebrow": "Hent",
  "dl.title": "Hent deskMonk gratis",
- "dl.mac": "Apple Silicon og Intel, macOS 10.13 eller nyere. Hvis macOS blokerer første start, så åbn Systemindstillinger → Anonymitet og sikkerhed → Åbn alligevel.",
+ "dl.mac": "Apple Silicon og Intel, macOS 10.13 eller nyere.",
  "dl.get": "Hent",
  "dl.win": "Windows 10 og 11, 64-bit. Pak ud og kør. Hvis SmartScreen advarer om en ny app, så vælg Flere oplysninger → Kør alligevel.",
  "dl.linux": "AppImage og tar.gz til x86_64 og ARM, plus <code>deskmonk-tui</code>, en terminalversion til servere uden skrivebord.",

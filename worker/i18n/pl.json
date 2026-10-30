@@ -103,7 +103,7 @@
  "price.note": "Ceny w USD; Paddle przed płatnością pokaże kwotę w twojej walucie i ewentualny podatek.",
  "dl.eyebrow": "Pobieranie",
  "dl.title": "Pobierz deskMonk za darmo",
- "dl.mac": "Apple Silicon i Intel, macOS 10.13 lub nowszy. Jeśli macOS zablokuje pierwsze uruchomienie, otwórz Ustawienia systemowe → Prywatność i ochrona → Otwórz mimo to.",
+ "dl.mac": "Apple Silicon i Intel, macOS 10.13 lub nowszy.",
  "dl.get": "Pobierz",
  "dl.win": "Windows 10 i 11, 64-bit. Rozpakuj i uruchom. Jeśli SmartScreen ostrzeże przed nową aplikacją, wybierz Więcej informacji → Uruchom mimo to.",
  "dl.linux": "AppImage i tar.gz dla x86_64 i ARM oraz <code>deskmonk-tui</code>, wersja terminalowa dla serwerów bez pulpitu.",

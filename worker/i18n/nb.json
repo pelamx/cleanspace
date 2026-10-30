@@ -103,7 +103,7 @@
  "price.note": "Priser i USD; Paddle viser din lokale valuta og eventuelle avgifter før du betaler.",
  "dl.eyebrow": "Last ned",
  "dl.title": "Få deskMonk gratis",
- "dl.mac": "Apple Silicon og Intel, macOS 10.13 eller nyere. Hvis macOS blokkerer første oppstart, åpner du Systeminnstillinger → Personvern og sikkerhet → Åpne likevel.",
+ "dl.mac": "Apple Silicon og Intel, macOS 10.13 eller nyere.",
  "dl.get": "Last ned",
  "dl.win": "Windows 10 og 11, 64-biters. Pakk ut og kjør. Hvis SmartScreen advarer om en ny app, velger du Mer informasjon → Kjør likevel.",
  "dl.linux": "AppImage og tar.gz for x86_64 og ARM, pluss <code>deskmonk-tui</code>, en terminalversjon for servere uten skrivebord.",

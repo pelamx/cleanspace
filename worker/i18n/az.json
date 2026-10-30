@@ -103,7 +103,7 @@
  "price.note": "Qiymətlər ABŞ dolları ilədir; Paddle ödənişdən əvvəl yerli valyutanızı və vergini göstərir.",
  "dl.eyebrow": "Yüklə",
  "dl.title": "deskMonk-u pulsuz əldə edin",
- "dl.mac": "Apple Silicon və Intel, macOS 10.13 və ya daha yeni. macOS ilk açılışı bloklayarsa, System Settings → Privacy &amp; Security → Open Anyway yolunu izləyin.",
+ "dl.mac": "Apple Silicon və Intel, macOS 10.13 və ya daha yeni.",
  "dl.get": "Yüklə",
  "dl.win": "Windows 10 və 11, 64 bit. Arxivi açın və işə salın. SmartScreen yeni tətbiq barədə xəbərdarlıq edərsə, More info → Run anyway seçin.",
  "dl.linux": "x86_64 və ARM üçün AppImage və tar.gz, həmçinin masaüstü olmayan serverlər üçün terminal versiyası <code>deskmonk-tui</code>.",

@@ -103,7 +103,7 @@
  "price.note": "قیمت‌ها به دلار آمریکا است؛ Paddle پیش از پرداخت، ارز محلی شما و هر مالیاتی را نشان می‌دهد.",
  "dl.eyebrow": "دانلود",
  "dl.title": "deskMonk را رایگان دریافت کنید",
- "dl.mac": "Apple Silicon و Intel، macOS 10.13 یا جدیدتر. اگر macOS جلوی اجرای اول را گرفت، به System Settings → Privacy &amp; Security → Open Anyway بروید.",
+ "dl.mac": "Apple Silicon و Intel، macOS 10.13 یا جدیدتر.",
  "dl.get": "دانلود",
  "dl.win": "Windows 10 و 11، 64 بیتی. فایل را از حالت فشرده خارج و اجرا کنید. اگر SmartScreen دربارهٔ برنامهٔ جدید هشدار داد، More info → Run anyway را انتخاب کنید.",
  "dl.linux": "AppImage و tar.gz برای x86_64 و ARM، به‌علاوهٔ <code>deskmonk-tui</code>، نسخهٔ ترمینالی برای سرورهای بدون محیط گرافیکی.",

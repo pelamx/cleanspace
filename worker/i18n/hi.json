@@ -103,7 +103,7 @@
  "price.note": "कीमतें USD में हैं; भुगतान से पहले Paddle आपकी स्थानीय मुद्रा और कोई भी टैक्स दिखाता है।",
  "dl.eyebrow": "डाउनलोड",
  "dl.title": "deskMonk मुफ़्त पाएँ",
- "dl.mac": "Apple Silicon और Intel, macOS 10.13 या नया। अगर macOS पहली बार खोलने से रोके, तो System Settings → Privacy &amp; Security → Open Anyway खोलें।",
+ "dl.mac": "Apple Silicon और Intel, macOS 10.13 या नया।",
  "dl.get": "डाउनलोड",
  "dl.win": "Windows 10 और 11, 64-बिट। अनज़िप करें और चलाएँ। अगर SmartScreen नए ऐप के बारे में चेतावनी दे, तो More info → Run anyway चुनें।",
  "dl.linux": "x86_64 और ARM के लिए AppImage और tar.gz, साथ में <code>deskmonk-tui</code>, बिना डेस्कटॉप वाले सर्वरों के लिए टर्मिनल वर्शन।",

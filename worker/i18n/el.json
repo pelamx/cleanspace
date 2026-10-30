@@ -103,7 +103,7 @@
  "price.note": "Τιμές σε USD· το Paddle δείχνει το τοπικό σας νόμισμα και τυχόν φόρους πριν πληρώσετε.",
  "dl.eyebrow": "Λήψη",
  "dl.title": "Κατεβάστε δωρεάν το deskMonk",
- "dl.mac": "Apple Silicon και Intel, macOS 10.13 ή νεότερο. Αν το macOS μπλοκάρει την πρώτη εκκίνηση, ανοίξτε System Settings → Privacy &amp; Security → Open Anyway.",
+ "dl.mac": "Apple Silicon και Intel, macOS 10.13 ή νεότερο.",
  "dl.get": "Λήψη",
  "dl.win": "Windows 10 και 11, 64-bit. Αποσυμπιέστε και εκτελέστε. Αν το SmartScreen προειδοποιήσει για νέα εφαρμογή, επιλέξτε More info → Run anyway.",
  "dl.linux": "AppImage και tar.gz για x86_64 και ARM, καθώς και το <code>deskmonk-tui</code>, μια έκδοση τερματικού για διακομιστές χωρίς γραφικό περιβάλλον.",

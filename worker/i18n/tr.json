@@ -103,7 +103,7 @@
  "price.note": "Fiyatlar USD; Paddle ödeme öncesi yerel para biriminizi ve vergiyi gösterir.",
  "dl.eyebrow": "İndir",
  "dl.title": "deskMonk'u ücretsiz edinin",
- "dl.mac": "Apple Silicon ve Intel, macOS 10.13 ve sonrası. macOS ilk açılışı engellerse Sistem Ayarları → Gizlilik ve Güvenlik → Yine de Aç.",
+ "dl.mac": "Apple Silicon ve Intel, macOS 10.13 ve sonrası.",
  "dl.get": "İndir",
  "dl.win": "Windows 10 ve 11, 64 bit. Zip'i açıp çalıştırın. SmartScreen yeni uygulama uyarısı verirse Ek bilgi → Yine de çalıştır.",
  "dl.linux": "x86_64 ve ARM için AppImage ve tar.gz; masaüstü olmayan sunucular için terminal sürümü <code>deskmonk-tui</code>.",

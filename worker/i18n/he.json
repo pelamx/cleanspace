@@ -103,7 +103,7 @@
  "price.note": "המחירים בדולר אמריקאי; Paddle מציג את המטבע המקומי שלך וכל מס לפני התשלום.",
  "dl.eyebrow": "הורדה",
  "dl.title": "להוריד את deskMonk בחינם",
- "dl.mac": "Apple Silicon ו-Intel, macOS 10.13 ואילך. אם macOS חוסם את ההפעלה הראשונה, יש לפתוח את הגדרות המערכת ← פרטיות ואבטחה ← פתח בכל זאת.",
+ "dl.mac": "Apple Silicon ו-Intel, macOS 10.13 ואילך.",
  "dl.get": "הורדה",
  "dl.win": "Windows 10 ו-11, 64 ביט. מחלצים את ה-ZIP ומריצים. אם SmartScreen מזהיר מפני אפליקציה חדשה, יש לבחור מידע נוסף ← הפעל בכל זאת.",
  "dl.linux": "AppImage ו-tar.gz ל-x86_64 ול-ARM, וגם <code>deskmonk-tui</code>, גרסת טרמינל לשרתים בלי סביבה גרפית.",

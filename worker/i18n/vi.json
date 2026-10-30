@@ -103,7 +103,7 @@
  "price.note": "Giá tính bằng USD; Paddle hiển thị đơn vị tiền tệ địa phương và thuế (nếu có) trước khi bạn thanh toán.",
  "dl.eyebrow": "Tải về",
  "dl.title": "Tải deskMonk miễn phí",
- "dl.mac": "Apple Silicon và Intel, macOS 10.13 trở lên. Nếu macOS chặn lần mở đầu tiên, hãy mở Cài đặt hệ thống → Quyền riêng tư &amp; Bảo mật → Vẫn mở.",
+ "dl.mac": "Apple Silicon và Intel, macOS 10.13 trở lên.",
  "dl.get": "Tải về",
  "dl.win": "Windows 10 và 11, 64-bit. Giải nén rồi chạy. Nếu SmartScreen cảnh báo về ứng dụng mới, hãy chọn More info → Run anyway.",
  "dl.linux": "AppImage và tar.gz cho x86_64 và ARM, cùng <code>deskmonk-tui</code>, phiên bản dòng lệnh cho máy chủ không có giao diện desktop.",
