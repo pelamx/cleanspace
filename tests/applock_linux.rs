@@ -49,7 +49,7 @@ fn locks_a_program_started_through_a_wrapper_script() {
     std::fs::write(&app, format!("[Desktop Entry]\nType=Application\nName=Wrapped\nExec=\"{}\" 30 %U\n", script.display())).unwrap();
 
     let (tx, rx) = channel();
-    let _watcher = Watcher::start(vec![app.clone()], move |a| tx.send(a).unwrap());
+    let _watcher = Watcher::start(vec![app.clone()], move |_, a| tx.send(a).unwrap());
     let mut child = Command::new(&script).arg("30").spawn().unwrap();
     let stopped = eventually(|| exited(&mut child));
     let _ = child.kill();
@@ -57,6 +57,40 @@ fn locks_a_program_started_through_a_wrapper_script() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(stopped, "program started through a wrapper script kept running");
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), app);
+}
+
+/// A program open before the lock is left alone, until it is launched again. A second launch of a browser hands
+/// over to the running one and is gone in about 60 ms, so the launch here is that short too.
+#[test]
+fn a_program_left_open_quits_when_launched_again_even_briefly() {
+    let dir = std::env::temp_dir().join(format!("deskmonk-lock-again-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join("again-sleep");
+    std::fs::copy("/bin/sleep", &exe).unwrap();
+    let exe = std::fs::canonicalize(exe).unwrap();
+    let app = dir.join("again.desktop");
+    std::fs::write(&app, format!("[Desktop Entry]\nType=Application\nName=Again\nExec=\"{}\" 30\n", exe.display())).unwrap();
+
+    let mut open = Command::new(&exe).arg("30").spawn().unwrap();
+    assert!(eventually(|| running_copies(&exe).len() == 1));
+    let (tx, rx) = channel();
+    let watcher = Watcher::start(vec![app.clone()], move |_, a| tx.send(a).unwrap());
+
+    // Left alone while nothing is launched.
+    std::thread::sleep(Duration::from_millis(1000));
+    assert!(!exited(&mut open), "program left open was stopped without a new launch");
+
+    // A very short launch: the open program is asked to quit, and the password is asked for.
+    let mut again = Command::new(&exe).arg("0.05").spawn().unwrap();
+    let quit = eventually(|| exited(&mut open));
+    let asked = rx.recv_timeout(Duration::from_secs(5));
+    let _ = open.kill();
+    let _ = open.wait();
+    let _ = again.wait();
+    drop(watcher);
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(quit, "a short new launch did not stop the program left open");
+    assert_eq!(asked.unwrap(), app);
 }
 
 #[test]
@@ -70,7 +104,7 @@ fn locks_unlocks_and_relocks_a_real_program() {
     std::fs::write(&app, format!("[Desktop Entry]\nType=Application\nName=Sleepy\nExec=\"{}\" 30 %U\n", exe.display())).unwrap();
 
     let (tx, rx) = channel();
-    let watcher = Watcher::start(vec![app.clone()], move |a| tx.send(a).unwrap());
+    let watcher = Watcher::start(vec![app.clone()], move |_, a| tx.send(a).unwrap());
 
     // Launched: stopped, and the password is asked for this app.
     let mut first = Command::new(&exe).arg("30").spawn().unwrap();

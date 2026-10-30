@@ -64,6 +64,11 @@ fn main() -> eframe::Result {
     } else {
         icon.clone()
     };
+    if let [_, flag, app] = &std::env::args().collect::<Vec<_>>()[..]
+        && flag == UNLOCK_FLAG
+    {
+        return unlock_prompt(app.into(), window_icon);
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 700.0])
@@ -112,7 +117,12 @@ fn main() -> eframe::Result {
             if cfg!(any(target_os = "macos", target_os = "linux")) && !APPSTORE {
                 let (tx, rx) = channel();
                 let ctx = cc.egui_ctx.clone();
-                app.watcher = Some(applock::Watcher::start(app.lock.apps.clone(), move |blocked| {
+                app.watcher = Some(applock::Watcher::start(app.lock.apps.clone(), move |watcher, blocked| {
+                    // From this thread: the window's own code doesn't run while it is on another Wayland workspace.
+                    if cfg!(target_os = "linux") {
+                        ask_unlock(watcher.clone(), blocked);
+                        return;
+                    }
                     let _ = tx.send(blocked);
                     ctx.request_repaint();
                 }));
@@ -153,6 +163,94 @@ fn palette(dark: bool) -> (Color32, Color32, Color32, Color32) {
             Color32::from_rgb(110, 115, 130),
         )
     }
+}
+
+/// Keeps the input method out of this frame's text fields. On Linux, with one running (fcitx5, ibus), a focused field and
+/// the input method keep waking each other, which redraws without end, lags, and loses or repeats keys.
+/// It should not see passwords either. shortcut: no CJK input in these fields on Linux, add it back when that loop is gone.
+fn no_input_method(ctx: &egui::Context) {
+    if cfg!(target_os = "linux") {
+        ctx.output_mut(|o| o.ime = None);
+    }
+}
+
+/// `deskmonk --unlock-prompt APP`: asks for the password to open a locked app, and exits with this code if it was right.
+/// Closing the window or a crash exits with anything else, which leaves the app locked.
+const UNLOCKED: i32 = 10;
+const UNLOCK_FLAG: &str = "--unlock-prompt";
+/// A prompt left open on another workspace would make later launches of the app do nothing visible, so it gives up.
+const UNLOCK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// On Linux the prompt is a program of its own: a new window opens on the workspace the user is on. Wayland does not
+/// let deskMonk raise its own window, and its window code doesn't run at all while it sits on another workspace.
+fn ask_unlock(watcher: applock::Watcher, app: PathBuf) {
+    std::thread::spawn(move || {
+        // /proc/self/exe still works after an update replaced the program file.
+        let status = std::process::Command::new("/proc/self/exe").arg(UNLOCK_FLAG).arg(&app).status();
+        if status.is_ok_and(|s| s.code() == Some(UNLOCKED)) {
+            watcher.unlock(&app);
+        } else {
+            watcher.dismiss(&app);
+        }
+    });
+}
+
+struct UnlockPrompt {
+    app: PathBuf,
+    name: String,
+    lock: applock::Config,
+    icons: Icons,
+    pw: String,
+    error: String,
+    opened: Instant,
+}
+
+impl eframe::App for UnlockPrompt {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        if self.opened.elapsed() > UNLOCK_TIMEOUT {
+            std::process::exit(1);
+        }
+        let ctx = ui.ctx().clone();
+        ctx.request_repaint_after(Duration::from_secs(1));
+        let icon = self.icons.get(&ctx, &self.app);
+        let (bg, _, _, _) = palette(ctx.global_style().visuals.dark_mode);
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(bg).inner_margin(Margin::same(28))).show(ui, |ui| {
+            let name = self.name.clone();
+            match app_password_prompt(ui, Some((icon, &name)), &tf!("{name} kilitli", "{name} is locked", "{name} está bloqueada"),
+                t("Açmak için deskMonk şifresini girin.", "Enter the deskMonk password to open it.", "Introduzca la contraseña de deskMonk para abrirla."),
+                t("Aç", "Open", "Abrir"), &mut self.pw, &self.error) {
+                Some(true) if self.lock.check(&self.pw) => std::process::exit(UNLOCKED),
+                Some(true) => {
+                    self.error = wrong_password().into();
+                    self.pw.clear();
+                }
+                Some(false) => std::process::exit(1),
+                None => {}
+            }
+        });
+        no_input_method(&ctx);
+    }
+}
+
+fn unlock_prompt(app: PathBuf, icon: egui::IconData) -> eframe::Result {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([376.0, 380.0])
+            .with_resizable(false)
+            .with_title("deskMonk")
+            .with_app_id("deskmonk")
+            .with_icon(Arc::new(icon)),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "deskMonk",
+        options,
+        Box::new(|cc| {
+            setup_style(&cc.egui_ctx);
+            let name = applock::name(&app);
+            Ok(Box::new(UnlockPrompt { app, name, lock: applock::Config::load(), icons: Icons { budget: 1, ..Default::default() }, pw: String::new(), error: String::new(), opened: Instant::now() }))
+        }),
+    )
 }
 
 fn setup_style(ctx: &egui::Context) {
@@ -1377,12 +1475,34 @@ impl App {
                 "Tras el pago, su clave (DM-…) aparece en la página de pago y en su correo. Péguela aquí.",
             )).color(muted));
             ui.add_space(6.0);
+            self.key_form(ui);
+        });
+        ui.add_space(10.0);
+    }
+
+    /// On every page until Pro: a buyer with a key from the payment page should not have to look for where it goes.
+    /// The heading is the wording the payment page tells them to look for (worker/i18n, pay.step2).
+    fn license_strip(&mut self, ui: &mut Ui) {
+        card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(t("🔑 Lisans anahtarım var", "🔑 Have a license key?", "🔑 ¿Tiene una clave de licencia?")).strong());
+                ui.add_space(6.0);
+                self.key_form(ui);
+            });
+        });
+        ui.add_space(12.0);
+    }
+
+    /// The key field and Activate button, with the check's error below them.
+    fn key_form(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 let busy = self.pro_check.is_some() && self.pro_manual;
                 let field = ui.add(egui::TextEdit::singleline(&mut self.pro_key).hint_text("DM-XXXX-XXXX-XXXX").desired_width(ui.available_width() - 110.0));
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let activate = egui::Button::new(RichText::new(t("Etkinleştir", "Activate", "Activar")).strong().color(Color32::WHITE)).fill(ACCENT);
-                if (ui.add_enabled(!busy, activate).clicked() || enter) && !self.pro_key.trim().is_empty() {
+                if (ui.add_enabled(!busy, activate).clicked() || enter) && !busy && !self.pro_key.trim().is_empty() {
                     self.pro_error.clear();
                     self.check_license(&ui.ctx().clone(), self.pro_key.trim().to_string(), true);
                 }
@@ -1394,7 +1514,6 @@ impl App {
                 ui.label(RichText::new(&self.pro_error).color(DANGER));
             }
         });
-        ui.add_space(10.0);
     }
 
     /// Cleaning or a vault job is running: no restart for an update now.
@@ -2313,14 +2432,6 @@ impl eframe::App for App {
                 }
                 continue;
             }
-            #[cfg(not(target_os = "macos"))]
-            {
-                // Wayland may refuse to raise the window; the notification still says why the app did not open.
-                let name = applock::name(&app);
-                notify(&tf!("{name} kilitli", "{name} is locked", "{name} está bloqueada"), t("Açmak için deskMonk şifresini girin.", "Enter the deskMonk password to open it.", "Introduzca la contraseña de deskMonk para abrirla."));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
-            }
             self.lock_prompt = Some(app);
             self.lock_error.clear();
             self.lock_pw.clear();
@@ -2565,6 +2676,9 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(bg).inner_margin(Margin::same(24)))
             .show(ui, |ui| {
+                if !self.plan.is_pro() && !APPSTORE && plan::URL.is_some() && self.page != Page::License {
+                    self.license_strip(ui);
+                }
                 match self.page {
                     Page::Monk => {
                         egui::ScrollArea::vertical().id_salt("monk_page").auto_shrink(false).show(ui, |ui| self.monk_view(ui));
@@ -2718,6 +2832,10 @@ impl eframe::App for App {
                     }
                 });
             });
+        }
+        // The contact form is free text in any language; every other field here is a path, a key or a password.
+        if !self.contact_open {
+            no_input_method(&ctx);
         }
     }
 }

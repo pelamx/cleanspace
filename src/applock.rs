@@ -167,13 +167,24 @@ struct State {
     allowed: HashMap<PathBuf, Option<Instant>>,
     /// Apps with a password prompt on screen; further launches are stopped without a new prompt.
     pending: HashSet<PathBuf>,
+    /// Apps that were already running when locked, never unlocked with the password, and the pids seen so far.
+    left_open: HashMap<PathBuf, HashSet<i32>>,
+    /// Apps asked to quit because they were launched again, and since when.
+    stopping: HashMap<PathBuf, Instant>,
+    /// Pids to ask to quit (SIGTERM); the watcher thread takes them after each pass.
+    term: Vec<i32>,
 }
 
-/// A running process: pid, executable path, and (Linux) its cgroup, which names the app it was launched as.
-type Proc = (i32, PathBuf, String);
+/// A running process: pid, executable path, (Linux) its cgroup, which names the app it was launched as, and (Linux) its parent.
+type Proc = (i32, PathBuf, String, i32);
 
 /// Grace period for an unlocked app to start before "not running" means it quit.
 const START_GRACE: Duration = Duration::from_secs(15);
+/// How long an app asked to quit may take to save its work before it is stopped hard.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+/// A locked program was opened: how long to scan without pausing. A second launch of a browser
+/// hands over to the running one and is gone in about 60 ms, far shorter than the normal pass.
+const BURST: Duration = Duration::from_millis(200);
 
 impl State {
     /// One pass over the running processes: returns the pids to stop and the apps to ask a password for.
@@ -183,9 +194,31 @@ impl State {
             let runs = matcher(app);
             let pids: Vec<i32> = procs.iter().filter(|p| runs(p)).map(|p| p.0).collect();
             if pids.is_empty() {
+                self.left_open.remove(app);
+                self.stopping.remove(app);
                 // Quit after running, or never started within the grace period: locked again.
                 if self.allowed.get(app).is_some_and(|t| t.is_none_or(|t| now - t > START_GRACE)) {
                     self.allowed.remove(app);
+                }
+                continue;
+            }
+            if let Some(known) = self.left_open.get_mut(app) {
+                // A process the app did not start itself, and not seen before, is the app being launched again.
+                // Its helpers have a parent in the app; a known one left behind by a quitting app does not count.
+                // macOS activates the running app instead of starting a process, so this can't see it there.
+                let roots: Vec<i32> = procs.iter().filter(|p| runs(p) && !pids.contains(&p.3)).map(|p| p.0).collect();
+                if cfg!(target_os = "linux") && roots.iter().any(|pid| !known.contains(pid)) {
+                    // Quit, not kill: this one has been in use and may hold work to save.
+                    self.term.extend(roots);
+                    self.stopping.insert(app.clone(), now);
+                    self.left_open.remove(app);
+                    self.allowed.remove(app);
+                    if self.pending.insert(app.clone()) {
+                        ask.push(app.clone());
+                    }
+                } else {
+                    known.extend(pids);
+                    self.allowed.insert(app.clone(), None);
                 }
                 continue;
             }
@@ -194,6 +227,10 @@ impl State {
                 *t = None;
                 continue;
             }
+            if self.stopping.get(app).is_some_and(|t| now - *t < STOP_GRACE) {
+                continue;
+            }
+            self.stopping.remove(app);
             kill.extend(pids);
             if self.pending.insert(app.clone()) {
                 ask.push(app.clone());
@@ -202,11 +239,14 @@ impl State {
         (kill, ask)
     }
 
-    /// Locked apps already running are left alone (they may hold unsaved work) until they quit.
+    /// Locked apps already running are left alone (they may hold unsaved work) until they quit or are launched again.
+    /// Apps unlocked with the password stay unlocked.
     fn allow_running(&mut self, procs: &[Proc], now: Instant) {
         for app in &self.apps {
-            if procs.iter().any(matcher(app)) {
+            let pids: HashSet<i32> = procs.iter().filter(|p| matcher(app)(p)).map(|p| p.0).collect();
+            if !pids.is_empty() && !self.allowed.contains_key(app) {
                 self.allowed.insert(app.clone(), Some(now));
+                self.left_open.insert(app.clone(), pids);
             }
         }
     }
@@ -217,7 +257,7 @@ impl State {
 #[cfg(not(target_os = "linux"))]
 fn matcher(app: &Path) -> impl Fn(&Proc) -> bool + use<> {
     let name = app.file_name().map(|n| n.to_os_string());
-    move |(_, process, _)| name.as_ref().is_some_and(|name| process.components().any(|c| c.as_os_str() == name))
+    move |(_, process, _, _)| name.as_ref().is_some_and(|name| process.components().any(|c| c.as_os_str() == name))
 }
 
 /// Matches the launcher's program, or a process the desktop started for this launcher: GNOME, KDE, uwsm,
@@ -232,7 +272,7 @@ fn matcher(app: &Path) -> impl Fn(&Proc) -> bool + use<> {
         .map(|b| if b.is_ascii_alphanumeric() || b":_.".contains(&b) { (b as char).to_string() } else { format!("\\x{b:02x}") })
         .collect();
     let snap = desktop_key(&text, "X-SnapInstanceName").map(|s| format!("snap.{s}."));
-    move |(_, process, cgroup)| {
+    move |(_, process, cgroup, _)| {
         let unit = cgroup.lines().filter_map(|l| l.rsplit('/').next()).collect::<Vec<_>>();
         exes.contains(process)
             || unit.iter().any(|u| {
@@ -324,11 +364,21 @@ fn exes_of(text: &str) -> Vec<PathBuf> {
 #[cfg(target_os = "linux")]
 fn exec_targets(script: &Path) -> Vec<PathBuf> {
     use std::io::Read;
-    let mut head = Vec::new();
-    // Read only the start: this runs on every watcher pass, and the program may be a huge binary.
-    if fs::File::open(script).and_then(|f| f.take(64 << 10).read_to_end(&mut head)).is_err() || !head.starts_with(b"#!") {
-        return Vec::new();
+    use std::os::unix::fs::MetadataExt;
+    // This runs on every watcher pass, and opening a watched program would wake the watcher (see Launches):
+    // the file is only opened again when it changed.
+    type Seen = HashMap<PathBuf, ((i64, i64, u64), Vec<PathBuf>)>;
+    static SEEN: std::sync::LazyLock<Mutex<Seen>> = std::sync::LazyLock::new(Default::default);
+    let Ok(meta) = fs::metadata(script) else { return Vec::new() };
+    let stamp = (meta.mtime(), meta.mtime_nsec(), meta.len());
+    if let Some((seen, targets)) = SEEN.lock().unwrap().get(script)
+        && *seen == stamp
+    {
+        return targets.clone();
     }
+    let mut head = Vec::new();
+    // Read only the start: the program may be a huge binary.
+    let is_script = fs::File::open(script).and_then(|f| f.take(64 << 10).read_to_end(&mut head)).is_ok() && head.starts_with(b"#!");
     let target = |line: &str| {
         let line = line.trim_start();
         let exec = line.strip_prefix("exec ");
@@ -349,7 +399,59 @@ fn exec_targets(script: &Path) -> Vec<PathBuf> {
         let path = fs::canonicalize(path).ok()?;
         (path.is_file() && !is_generic(&path)).then_some(path)
     };
-    String::from_utf8_lossy(&head).lines().filter_map(target).collect()
+    let targets: Vec<PathBuf> = if is_script { String::from_utf8_lossy(&head).lines().filter_map(target).collect() } else { Vec::new() };
+    SEEN.lock().unwrap().insert(script.to_path_buf(), (stamp, targets.clone()));
+    targets
+}
+
+/// Wakes the watcher the moment a locked program is opened (inotify), so a launch this short is not missed
+/// without scanning all processes many times a second. If inotify fails, `wait` just sleeps.
+#[cfg(target_os = "linux")]
+struct Launches(i32);
+
+#[cfg(target_os = "linux")]
+impl Launches {
+    fn new() -> Self {
+        Self(unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) })
+    }
+
+    /// Adding a watch again is free, and picks up a program replaced by an update.
+    fn watch(&self, apps: &[PathBuf]) {
+        use std::os::unix::ffi::OsStrExt;
+        for exe in apps.iter().flat_map(|app| exes_of(&fs::read_to_string(app).unwrap_or_default())) {
+            if let Ok(path) = std::ffi::CString::new(exe.as_os_str().as_bytes()) {
+                unsafe { libc::inotify_add_watch(self.0, path.as_ptr(), libc::IN_OPEN) };
+            }
+        }
+    }
+
+    /// True if a watched program was opened within `timeout`.
+    fn wait(&self, timeout: Duration) -> bool {
+        let mut fd = libc::pollfd { fd: self.0, events: libc::POLLIN, revents: 0 };
+        let opened = unsafe { libc::poll(&mut fd, 1, timeout.as_millis() as i32) } > 0;
+        if opened {
+            let mut events = [0u8; 4096];
+            while unsafe { libc::read(self.0, events.as_mut_ptr().cast(), events.len()) } > 0 {}
+        }
+        opened
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+struct Launches;
+
+#[cfg(not(target_os = "linux"))]
+impl Launches {
+    fn new() -> Self {
+        Self
+    }
+
+    fn watch(&self, _: &[PathBuf]) {}
+
+    fn wait(&self, timeout: Duration) -> bool {
+        std::thread::sleep(timeout);
+        false
+    }
 }
 
 /// Background watcher; clones share one state.
@@ -358,23 +460,34 @@ pub struct Watcher(Arc<Mutex<State>>);
 
 impl Watcher {
     /// `on_blocked` runs (on the watcher thread) when a locked app was stopped and needs the password.
-    pub fn start(apps: Vec<PathBuf>, on_blocked: impl Fn(PathBuf) + Send + 'static) -> Self {
+    pub fn start(apps: Vec<PathBuf>, on_blocked: impl Fn(&Watcher, PathBuf) + Send + 'static) -> Self {
         let watcher = Watcher(Arc::new(Mutex::new(State::default())));
         watcher.set_apps(apps);
+        let this = watcher.clone();
         let state = watcher.0.clone();
         std::thread::spawn(move || {
+            let launches = Launches::new();
+            let mut burst_until = Instant::now();
             loop {
-                std::thread::sleep(Duration::from_millis(300));
+                if Instant::now() < burst_until {
+                    std::thread::sleep(Duration::from_millis(5));
+                } else if launches.wait(Duration::from_millis(300)) {
+                    burst_until = Instant::now() + BURST;
+                }
                 let procs = processes();
-                let (kill, ask) = state.lock().unwrap().check(&procs, Instant::now());
-                for pid in kill {
-                    // Just launched, so nothing unsaved is lost.
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(pid, libc::SIGKILL);
+                let (kill, ask, term, apps) = {
+                    let mut state = state.lock().unwrap();
+                    let (kill, ask) = state.check(&procs, Instant::now());
+                    (kill, ask, std::mem::take(&mut state.term), state.apps.clone())
+                };
+                #[cfg(unix)]
+                for (pids, signal) in [(kill, libc::SIGKILL), (term, libc::SIGTERM)] {
+                    for pid in pids {
+                        unsafe { libc::kill(pid, signal) };
                     }
                 }
-                ask.into_iter().for_each(&on_blocked);
+                ask.into_iter().for_each(|app| on_blocked(&this, app));
+                launches.watch(&apps);
             }
         });
         watcher
@@ -382,6 +495,9 @@ impl Watcher {
 
     pub fn set_apps(&self, apps: Vec<PathBuf>) {
         let mut state = self.0.lock().unwrap();
+        state.allowed.retain(|app, _| apps.contains(app));
+        state.left_open.retain(|app, _| apps.contains(app));
+        state.stopping.retain(|app, _| apps.contains(app));
         state.apps = apps;
         state.allow_running(&processes(), Instant::now());
     }
@@ -390,6 +506,8 @@ impl Watcher {
     pub fn unlock(&self, app: &Path) {
         let mut state = self.0.lock().unwrap();
         state.allowed.insert(app.to_path_buf(), Some(Instant::now()));
+        state.left_open.remove(app);
+        state.stopping.remove(app);
         state.pending.remove(app);
         open(app);
     }
@@ -414,7 +532,7 @@ fn processes() -> Vec<Proc> {
         .filter(|&pid| pid != me)
         .filter_map(|pid| {
             let len = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
-            (len > 0).then(|| (pid, PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len as usize])), String::new()))
+            (len > 0).then(|| (pid, PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len as usize])), String::new(), 0))
         })
         .collect()
 }
@@ -435,7 +553,15 @@ fn processes() -> Vec<Proc> {
             }
             // A sandboxed app's program may be unreadable; its cgroup still names it. Updated programs read "… (deleted)".
             let exe = fs::read_link(e.path().join("exe")).map(|p| PathBuf::from(p.to_string_lossy().trim_end_matches(" (deleted)"))).unwrap_or_default();
-            Some((pid, exe, fs::read_to_string(e.path().join("cgroup")).unwrap_or_default()))
+            // stat is "pid (name) state ppid …", and the name may hold spaces and parentheses.
+            let stat = fs::read_to_string(e.path().join("stat")).unwrap_or_default();
+            let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+            // Exited and waiting for its parent to collect it: no longer running, whatever its cgroup says.
+            if fields.next()? == "Z" {
+                return None;
+            }
+            let parent = fields.next()?.parse().unwrap_or(0);
+            Some((pid, exe, fs::read_to_string(e.path().join("cgroup")).unwrap_or_default(), parent))
         })
         .collect()
 }
@@ -496,9 +622,9 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     fn notes() -> (PathBuf, Vec<Proc>, Vec<Proc>) {
         let app = PathBuf::from("/Applications/Notes.app");
-        let running = vec![(42, app.join("Contents/MacOS/Notes"), String::new())];
-        let other = vec![(43, PathBuf::from("/private/var/folders/x/AppTranslocation/y/d/Notes.app/Contents/MacOS/Notes"), String::new())];
-        assert!(!matcher(&app)(&(1, PathBuf::from("/Applications/Notes Helper.app/x"), String::new())));
+        let running = vec![(42, app.join("Contents/MacOS/Notes"), String::new(), 1)];
+        let other = vec![(43, PathBuf::from("/private/var/folders/x/AppTranslocation/y/d/Notes.app/Contents/MacOS/Notes"), String::new(), 1)];
+        assert!(!matcher(&app)(&(1, PathBuf::from("/Applications/Notes Helper.app/x"), String::new(), 1)));
         (app, running, other)
     }
 
@@ -511,7 +637,7 @@ mod tests {
         let app = dir.join("org.example.my-notes.desktop");
         fs::write(&app, format!("[Desktop Entry]\nType=Application\nName=My Notes\nExec=env A=1 \"{}\" %U\n", exe.display())).unwrap();
         let exe = fs::canonicalize(exe).unwrap();
-        let scope = |unit: &str| (43, PathBuf::from("/usr/bin/bash"), format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}\n"));
+        let scope = |unit: &str| (43, PathBuf::from("/usr/bin/bash"), format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}\n"), 1);
         let runs = matcher(&app);
         assert!(runs(&scope("app-gnome-org.example.my\\x2dnotes-43.scope")));
         assert!(runs(&scope("app-Hyprland-org.example.my\\x2dnotes@abc.service")));
@@ -520,7 +646,7 @@ mod tests {
         // KDE: random suffix after the id.
         assert!(runs(&scope("app-org.example.my\\x2dnotes-0c8e2f1a9b7d4e6f8a1b2c3d4e5f6a7b.scope")));
         assert_eq!(name(&app), "My Notes");
-        (app, vec![(42, exe, String::new())], vec![scope("app-flatpak-org.example.my\\x2dnotes-43.scope")])
+        (app, vec![(42, exe, String::new(), 1)], vec![scope("app-flatpak-org.example.my\\x2dnotes-43.scope")])
     }
 
     #[cfg(target_os = "linux")]
@@ -538,7 +664,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let app = dir.join("org.x.C++ IDE.desktop");
         fs::write(&app, "[Desktop Entry]\nExec=sh\n").unwrap();
-        assert!(matcher(&app)(&(1, PathBuf::new(), "0::/app.slice/app-gnome-org.x.C\\x2b\\x2b\\x20IDE-9.scope\n".into())));
+        assert!(matcher(&app)(&(1, PathBuf::new(), "0::/app.slice/app-gnome-org.x.C\\x2b\\x2b\\x20IDE-9.scope\n".into(), 1)));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -579,6 +705,69 @@ mod tests {
         fs::write(&looping, format!("#!/bin/sh\nexec {}\n", looping.display())).unwrap();
         assert_eq!(launcher(&looping), [looping.clone()]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The watcher reads the launcher's programs on every pass; if that woke it, it would never rest.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn looking_at_a_program_does_not_wake_the_watcher_but_opening_it_does() {
+        let dir = std::env::temp_dir().join(format!("deskmonk-wake-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("wrapper");
+        fs::write(&script, "#!/bin/sh\nexec /bin/true\n").unwrap();
+        let app = dir.join("wrapper.desktop");
+        let launcher = format!("[Desktop Entry]\nExec=\"{}\"\n", script.display());
+        fs::write(&app, &launcher).unwrap();
+        let launches = Launches::new();
+        launches.watch(std::slice::from_ref(&app));
+        launches.wait(Duration::ZERO);
+        for _ in 0..3 {
+            exes_of(&launcher);
+            matcher(&app)(&(1, PathBuf::new(), String::new(), 1));
+            launches.watch(std::slice::from_ref(&app));
+        }
+        assert!(!launches.wait(Duration::from_millis(100)), "the watcher woke itself");
+        fs::File::open(&script).unwrap();
+        assert!(launches.wait(Duration::from_millis(500)), "opening the program did not wake the watcher");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_app_left_open_is_asked_to_quit_only_when_launched_again() {
+        let (app, running, _) = notes();
+        let exe = running[0].1.clone();
+        let proc = |pid, parent| (pid, exe.clone(), String::new(), parent);
+        let t0 = Instant::now();
+        let mut state = State { apps: vec![app.clone()], ..Default::default() };
+        state.allow_running(&[proc(42, 1)], t0);
+
+        // In use: new helpers started by the app change nothing.
+        assert_eq!(state.check(&[proc(42, 1), proc(50, 42), proc(51, 50)], t0), (vec![], vec![]));
+        assert!(state.term.is_empty());
+        // Quitting: a helper seen before, left without its parent, is not a launch, and no prompt appears.
+        assert_eq!(state.check(&[proc(50, 1)], t0), (vec![], vec![]));
+        assert!(state.term.is_empty());
+        assert_eq!(state.check(&[], t0), (vec![], vec![]));
+        // Quit for good: locked as usual, the next launch asks at once.
+        assert_eq!(state.check(&[proc(60, 1)], t0).1, vec![app.clone()]);
+
+        // Launched again while open: the password is asked and the app is asked to quit, not killed.
+        let mut state = State { apps: vec![app.clone()], ..Default::default() };
+        state.allow_running(&[proc(42, 1)], t0);
+        let both = [proc(42, 1), proc(50, 42), proc(70, 9)];
+        assert_eq!(state.check(&both, t0), (vec![], vec![app.clone()]));
+        assert_eq!(std::mem::take(&mut state.term), [42, 70]);
+        // It gets time to save its work, then is stopped hard, without a second prompt.
+        assert_eq!(state.check(&both, t0 + Duration::from_secs(4)), (vec![], vec![]));
+        assert_eq!(state.check(&both, t0 + Duration::from_secs(5)), (vec![42, 50, 70], vec![]));
+
+        // Opened with the password: stays open, and changing the lock list does not undo that.
+        let mut state = State { apps: vec![app.clone()], ..Default::default() };
+        state.allowed.insert(app.clone(), None);
+        state.allow_running(&[proc(42, 1)], t0);
+        assert_eq!(state.check(&[proc(42, 1), proc(70, 9)], t0), (vec![], vec![]));
+        assert!(state.term.is_empty());
     }
 
     #[test]
